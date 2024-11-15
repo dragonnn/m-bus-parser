@@ -200,7 +200,9 @@ impl TryFrom<&ValueInformationBlock> for ValueInformation {
         let mut decimal_offset_exponent = 0;
         match ValueInformationCoding::from(&value_information_block.value_information) {
             ValueInformationCoding::Primary => {
-                match value_information_block.value_information.data & 0x7F {
+                let masked_value_information_block =
+                    value_information_block.value_information.data & 0x7F;
+                match masked_value_information_block {
                     0x00..=0x07 => {
                         units.push(unit!(Watt));
                         units.push(unit!(Hour));
@@ -266,6 +268,13 @@ impl TryFrom<&ValueInformationBlock> for ValueInformation {
                     }
                     0x58..=0x5F | 0x64..=0x67 => {
                         units.push(unit!(Celsius));
+                        match masked_value_information_block {
+                            0x58..=0x5B => labels.push(ValueLabel::FlowTemperature),
+                            0x5C..=0x5F => labels.push(ValueLabel::ReturnTemperature),
+                            0x60..=0x63 => labels.push(ValueLabel::TemperatureDifference),
+                            0x64..=0x67 => labels.push(ValueLabel::ExternalTemperature),
+                            _ => {}
+                        }
                         decimal_scale_exponent +=
                             (value_information_block.value_information.data & 0b11) as isize - 3;
                     }
@@ -1032,6 +1041,10 @@ pub enum ValueLabel {
     DisplayOutputScalingFactor,
     ManufacturerSpecific,
     Volume,
+    FlowTemperature,
+    ReturnTemperature,
+    TemperatureDifference,
+    ExternalTemperature,
 }
 
 #[cfg(feature = "std")]
