@@ -211,6 +211,7 @@ impl TryFrom<&ValueInformationBlock> for ValueInformation {
                     }
                     0x08..=0x0F => {
                         units.push(unit!(Joul));
+                        labels.push(ValueLabel::Energy);
                         decimal_scale_exponent =
                             (value_information_block.value_information.data & 0b111) as isize;
                     }
