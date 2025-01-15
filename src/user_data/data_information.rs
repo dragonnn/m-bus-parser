@@ -559,7 +559,7 @@ impl DataFieldCoding {
                 {
                     let x: [u8; 4] = x;
                     Ok(Data {
-                        value: Some(DataType::Number(f64::from(f32::from_be_bytes(x)))),
+                        value: Some(DataType::Number(f64::from(f32::from_le_bytes(x)))),
                         size: 4,
                     })
                 } else {
