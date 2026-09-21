@@ -4,10 +4,13 @@
 //! * was implemented using the publicly available documentation available at <https://m-bus.com/>
 //! # Example
 //! ```rust
-//! use m_bus_parser::frames::{ Address, Frame, Function };
-//! use m_bus_parser::user_data::{ DataRecords, UserDataBlock };
-//! use std::io;
 //!
+//! use m_bus_core::{FrameError, Function};
+//! use wired_mbus_link_layer::{Address, WiredFrame};
+//! use m_bus_parser::user_data::parse_application_layer;
+//! use m_bus_parser::mbus_data::MbusData;
+//!
+//! fn try_parse() -> Result<(), m_bus_parser::MbusError> {
 //!     let example = vec![
 //!         0x68, 0x4D, 0x4D, 0x68, 0x08, 0x01, 0x72, 0x01,
 //!         0x00, 0x00, 0x00, 0x96, 0x15, 0x01, 0x00, 0x18,
@@ -23,56 +26,78 @@
 //!     ];
 //!
 //!     // Parse the frame
-//!     let frame = Frame::try_from(example.as_slice()).unwrap();
+//!     let frame = WiredFrame::try_from(example.as_slice())?;
 //!
-//!     if let Frame::LongFrame { function, address, data } = frame {
+//!     if let WiredFrame::LongFrame { function, address, data } = frame {
 //!         assert_eq!(function, Function::RspUd { acd: false, dfc: false });
 //!         assert_eq!(address, Address::Primary(1));
-//!         if let Ok(UserDataBlock::VariableDataStructure { fixed_data_header, variable_data_block }) = UserDataBlock::try_from(data) {
-//!             let data_records = DataRecords::try_from(variable_data_block).unwrap();
-//!             println!("data_records: {:#?}", data_records);
-//!             let data_records = DataRecords::try_from(variable_data_block).unwrap();
+//!         let application_layer = parse_application_layer(data)?;
+//!         if let Some(data_records) = application_layer.data_records() {
+//!             println!("data_records: {:#?}", data_records.collect::<Result<Vec<_>, _>>()?);
 //!         }
 //!     }
 //!
 //!     // Parse everything at once
-//!     let parsed_data = m_bus_parser::MbusData::try_from(example.as_slice()).unwrap();
+//!     let parsed_data = MbusData::<WiredFrame>::try_from(example.as_slice())?;
 //!     println!("parsed_data: {:#?}", parsed_data);
-//!
+//!     Ok(())
+//! }
 //! ```
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use frames::FrameError;
-use user_data::ApplicationLayerError;
+#[cfg(feature = "std")]
+#[allow(clippy::indexing_slicing)]
+pub mod annotate;
+#[cfg(feature = "std")]
+pub mod manufacturers;
+pub mod mbus_data;
+#[cfg(feature = "std")]
+pub mod output;
+#[cfg(feature = "std")]
+mod rscada_xml;
+pub use m_bus_application_layer as user_data;
+
+pub use m_bus_core::decryption;
+use m_bus_core::ApplicationLayerError;
+// Re-export link layer types for convenience
+pub use m_bus_core::{FrameError, Function};
+pub use wired_mbus_link_layer::{Address, WiredFrame};
+pub use wireless_mbus_link_layer::{FormatABytes, FormatAFrame, ManufacturerId, WirelessFrame};
 
 #[cfg(feature = "std")]
-use prettytable::{format, row, Table};
-
+pub use mbus_data::serialize_mbus_data;
 #[cfg(feature = "std")]
-use std::str;
+pub use output::{
+    decode_bytes, decode_data_records, decode_data_records_hex, decode_hex, decode_hex_bytes,
+    render_bytes, render_hex, DecodeOptions, DecodedOutput, OutputError, OutputFormat,
+    RenderOptions,
+};
 
-pub mod frames;
-pub mod user_data;
-
-#[derive(Debug)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Serialize),
-    serde(bound(deserialize = "'de: 'a"))
-)]
-pub struct MbusData<'a> {
-    pub frame: frames::Frame<'a>,
-    pub user_data: Option<user_data::UserDataBlock<'a>>,
-    pub data_records: Option<user_data::DataRecords<'a>>,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum MbusError {
     FrameError(FrameError),
+    WirelessFrameError(wireless_mbus_link_layer::FrameError),
     ApplicationLayerError(ApplicationLayerError),
+    DataRecordError(user_data::variable_user_data::DataRecordError),
 }
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for MbusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MbusError::FrameError(e) => write!(f, "{e}"),
+            MbusError::WirelessFrameError(e) => write!(f, "{:?}", e),
+            MbusError::ApplicationLayerError(e) => write!(f, "{e}"),
+            MbusError::DataRecordError(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for MbusError {}
 
 impl From<FrameError> for MbusError {
     fn from(error: FrameError) -> Self {
@@ -86,217 +111,14 @@ impl From<ApplicationLayerError> for MbusError {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for MbusData<'a> {
-    type Error = MbusError;
-
-    fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        let frame = frames::Frame::try_from(data)?;
-        let mut user_data = None;
-        let mut data_records = None;
-        match &frame {
-            frames::Frame::LongFrame { data, .. } => {
-                if let Ok(x) = user_data::UserDataBlock::try_from(*data) {
-                    user_data = Some(x);
-                    if let Ok(user_data::UserDataBlock::VariableDataStructure {
-                        fixed_data_header: _,
-                        variable_data_block,
-                    }) = user_data::UserDataBlock::try_from(*data)
-                    {
-                        data_records = Some(variable_data_block.into());
-                    }
-                }
-            }
-            frames::Frame::SingleCharacter { .. } => (),
-            frames::Frame::ShortFrame { .. } => (),
-            frames::Frame::ControlFrame { .. } => (),
-        };
-
-        Ok(MbusData {
-            frame,
-            user_data,
-            data_records,
-        })
+impl From<user_data::variable_user_data::DataRecordError> for MbusError {
+    fn from(error: user_data::variable_user_data::DataRecordError) -> Self {
+        Self::DataRecordError(error)
     }
 }
 
-#[cfg(feature = "std")]
-fn clean_and_convert(input: &str) -> Vec<u8> {
-    let input = input.trim();
-    let cleaned_data: String = input.replace("0x", "").replace([' ', ',', 'x'], "");
-
-    cleaned_data
-        .as_bytes()
-        .chunks(2)
-        .map(|chunk| {
-            let byte_str = str::from_utf8(chunk).unwrap_or_default();
-            u8::from_str_radix(byte_str, 16).unwrap_or_default()
-        })
-        .collect()
-}
-
-#[cfg(feature = "std")]
-pub fn serialize_mbus_data(data: &str, format: &str) -> String {
-    match format {
-        "json" => parse_to_json(data),
-        "yaml" => parse_to_yaml(data),
-        _ => parse_to_table(data).to_string(),
-    }
-}
-
-#[cfg(feature = "std")]
-fn parse_to_json(input: &str) -> std::string::String {
-    let data = clean_and_convert(input);
-    let parsed_data = MbusData::try_from(data.as_slice());
-
-    serde_json::to_string_pretty(&parsed_data)
-        .unwrap_or_default()
-        .to_string()
-}
-
-#[cfg(feature = "std")]
-fn parse_to_yaml(input: &str) -> std::string::String {
-    let data = clean_and_convert(input);
-    let parsed_data = MbusData::try_from(data.as_slice());
-
-    serde_yaml::to_string(&parsed_data)
-        .unwrap_or_default()
-        .to_string()
-}
-
-#[cfg(feature = "std")]
-fn parse_to_table(input: &str) -> std::string::String {
-    use user_data::UserDataBlock;
-
-    let data = clean_and_convert(input);
-
-    let mut table_output = String::new();
-    if let Ok(parsed_data) = MbusData::try_from(data.as_slice()) {
-        let mut table = Table::new();
-        table.set_format(*format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
-
-        match parsed_data.frame {
-            frames::Frame::LongFrame {
-                function,
-                address,
-                data: _,
-            } => {
-                table_output.push_str("Long Frame \n");
-
-                table.set_titles(row!["Function", "Address"]);
-                table.add_row(row![function, address]);
-
-                table_output.push_str(&table.to_string());
-                table = Table::new();
-
-                match parsed_data.user_data {
-                    Some(UserDataBlock::VariableDataStructure {
-                        fixed_data_header,
-                        variable_data_block: _,
-                    }) => {
-                        table.add_row(row![
-                            fixed_data_header.identification_number,
-                            fixed_data_header
-                                .manufacturer
-                                .map(|i| i.to_string())
-                                .unwrap_or_else(|_| "invalid".to_string()),
-                            fixed_data_header.access_number,
-                            fixed_data_header.status,
-                            fixed_data_header.signature,
-                            fixed_data_header.version,
-                            fixed_data_header.medium,
-                        ]);
-
-                        table.set_titles(row![
-                            "Identification Number",
-                            "Manufacturer",
-                            "Access Number",
-                            "Status",
-                            "Signature",
-                            "Version",
-                            "Medium",
-                        ]);
-                    }
-                    Some(UserDataBlock::FixedDataStructure {
-                        identification_number,
-                        access_number,
-                        status,
-                        medium_ad_unit,
-                        counter1,
-                        counter2,
-                    }) => {
-                        table.set_titles(row![
-                            "Identification Number",
-                            "Access Number",
-                            "Status",
-                            "Medium Ad Unit",
-                            "Counter 1",
-                            "Counter 2",
-                        ]);
-                        table.add_row(row![
-                            identification_number,
-                            access_number,
-                            status,
-                            medium_ad_unit,
-                            counter1,
-                            counter2,
-                        ]);
-                    }
-                    Some(UserDataBlock::ResetAtApplicationLevel { subcode }) => {
-                        table.set_titles(row!["Function", "Address", "Subcode"]);
-                        table.add_row(row![function, address, subcode]);
-                    }
-                    None => {
-                        table.set_titles(row!["Function", "Address"]);
-                        table.add_row(row![function, address]);
-                    }
-                }
-
-                table_output.push_str(&table.to_string());
-                table = Table::new();
-
-                table.set_titles(row!["Value", "Data Information",]);
-
-                if let Some(data_records) = parsed_data.data_records {
-                    for record in data_records.flatten() {
-                        let value_information = match record
-                            .data_record_header
-                            .processed_data_record_header
-                            .value_information
-                        {
-                            Some(x) => format!("{}", x),
-                            None => "None".to_string(),
-                        };
-
-                        let data_information = match record
-                            .data_record_header
-                            .processed_data_record_header
-                            .data_information
-                        {
-                            Some(x) => format!("{}", x),
-                            None => "None".to_string(),
-                        };
-
-                        table.add_row(row![
-                            format!("({}{}", record.data, value_information),
-                            format!("{}", data_information)
-                        ]);
-                    }
-                }
-            }
-            frames::Frame::ShortFrame { .. } => {
-                table_output.push_str("Short Frame\n");
-            }
-            frames::Frame::SingleCharacter { .. } => {
-                table_output.push_str("Single Character Frame\n");
-            }
-            frames::Frame::ControlFrame { .. } => {
-                table_output.push_str("Control Frame\n");
-            }
-        }
-
-        table_output.push_str(&table.to_string());
-        table_output
-    } else {
-        "Error parsing data".to_string()
+impl From<wireless_mbus_link_layer::FrameError> for MbusError {
+    fn from(error: wireless_mbus_link_layer::FrameError) -> Self {
+        Self::WirelessFrameError(error)
     }
 }

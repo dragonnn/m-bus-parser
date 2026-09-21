@@ -1,9 +1,10 @@
 use super::data_information::{self};
 use super::variable_user_data::DataRecordError;
-use super::FixedDataHeader;
+use super::LongTplHeader;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataInformationBlock<'a> {
     pub data_information_field: DataInformationField,
     pub data_information_field_extension: Option<DataInformationFieldExtensions<'a>>,
@@ -13,14 +14,15 @@ impl DataInformationBlock<'_> {
     #[must_use]
     pub fn get_size(&self) -> usize {
         let mut size = 1;
-        if let Some(vife) = &self.data_information_field_extension {
-            size += vife.len();
+        if let Some(dife) = &self.data_information_field_extension {
+            size += dife.len();
         }
         size
     }
 }
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataInformationField {
     pub data: u8,
 }
@@ -52,6 +54,7 @@ pub struct DataInformationFieldExtension {
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataInformationFieldExtensions<'a>(&'a [u8]);
 impl<'a> DataInformationFieldExtensions<'a> {
     const fn new(data: &'a [u8]) -> Self {
@@ -88,27 +91,25 @@ impl<'a> TryFrom<&'a [u8]> for DataInformationBlock<'a> {
         };
         let dif = DataInformationField::from(*dif_byte);
 
-        let length = data.iter().take_while(|&&u8| u8 & 0x80 != 0).count();
-        let offset = length + 1;
-        match () {
-            () if dif.has_extension() && offset > MAXIMUM_DATA_INFORMATION_SIZE => {
-                Err(DataInformationError::DataTooLong)
-            }
-            () if dif.has_extension() && offset > data.len() => {
-                Err(DataInformationError::DataTooShort)
-            }
-            () if dif.has_extension() => Ok(DataInformationBlock {
-                data_information_field: dif,
-                data_information_field_extension: Some(DataInformationFieldExtensions::new(
-                    data.get(..offset)
-                        .ok_or(DataInformationError::DataTooShort)?,
-                )),
-            }),
-            () => Ok(DataInformationBlock {
+        if !dif.has_extension() {
+            return Ok(DataInformationBlock {
                 data_information_field: dif,
                 data_information_field_extension: None,
-            }),
+            });
         }
+
+        let length = data.iter().take_while(|&&u8| u8 & 0x80 != 0).count();
+        let offset = length + 1;
+        if offset > MAXIMUM_DATA_INFORMATION_SIZE {
+            return Err(DataInformationError::DataTooLong);
+        }
+        Ok(DataInformationBlock {
+            data_information_field: dif,
+            data_information_field_extension: Some(DataInformationFieldExtensions::new(
+                data.get(..offset)
+                    .ok_or(DataInformationError::DataTooShort)?,
+            )),
+        })
     }
 }
 
@@ -116,10 +117,12 @@ impl DataInformationField {
     const fn has_extension(&self) -> bool {
         self.data & 0x80 != 0
     }
-}
 
-impl DataInformationFieldExtension {
-    const fn special_function(&self) -> SpecialFunctions {
+    pub const fn is_special_function(&self) -> bool {
+        self.data & 0x0F == 0x0F
+    }
+
+    pub const fn special_function(&self) -> SpecialFunctions {
         match self.data {
             0x0F => SpecialFunctions::ManufacturerSpecific,
             0x1F => SpecialFunctions::MoreRecordsFollow,
@@ -131,6 +134,7 @@ impl DataInformationFieldExtension {
 }
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataInformation {
     pub storage_number: u64,
     pub tariff: u64,
@@ -155,15 +159,40 @@ impl std::fmt::Display for DataInformation {
 const MAXIMUM_DATA_INFORMATION_SIZE: usize = 11;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DataInformationExtensionField {}
 
-#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum DataInformationError {
     NoData,
     DataTooLong,
     DataTooShort,
     InvalidValueInformation,
+    Unimplemented { feature: &'static str },
 }
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for DataInformationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DataInformationError::NoData => write!(f, "No data available"),
+            DataInformationError::DataTooLong => write!(f, "Data too long"),
+            DataInformationError::DataTooShort => write!(f, "Data too short"),
+            DataInformationError::InvalidValueInformation => {
+                write!(f, "Invalid value information")
+            }
+            DataInformationError::Unimplemented { feature } => {
+                write!(f, "Unimplemented feature: {}", feature)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DataInformationError {}
 
 impl TryFrom<&DataInformationBlock<'_>> for DataInformation {
     type Error = DataInformationError;
@@ -179,13 +208,9 @@ impl TryFrom<&DataInformationBlock<'_>> for DataInformation {
         let mut extension_index = 1;
         let mut tariff = 0;
         let mut device = 0;
-        let mut first_dife = None;
-
         if let Some(difes) = possible_difes {
-            first_dife = difes.clone().next();
             let mut tariff_index = 0;
-            let mut device_index = 0;
-            for dife in difes.clone() {
+            for (device_index, dife) in difes.clone().enumerate() {
                 if extension_index > MAXIMUM_DATA_INFORMATION_SIZE {
                     return Err(DataInformationError::DataTooLong);
                 }
@@ -194,7 +219,6 @@ impl TryFrom<&DataInformationBlock<'_>> for DataInformation {
                 tariff |= u64::from((dife & 0x30) >> 4) << (tariff_index);
                 tariff_index += 2;
                 device |= u64::from((dife & 0x40) >> 6) << device_index;
-                device_index += 1;
                 extension_bit = dife & 0x80 != 0;
                 extension_index += 1;
             }
@@ -223,8 +247,8 @@ impl TryFrom<&DataInformationBlock<'_>> for DataInformation {
             0b1101 => DataFieldCoding::VariableLength,
             0b1110 => DataFieldCoding::BCDDigit12,
             0b1111 => DataFieldCoding::SpecialFunctions(
-                first_dife
-                    .ok_or(DataInformationError::DataTooShort)?
+                data_information_block
+                    .data_information_field
                     .special_function(),
             ),
             _ => unreachable!(), // This case should never occur due to the 4-bit width
@@ -246,11 +270,12 @@ impl TryFrom<&DataInformationBlock<'_>> for DataInformation {
     }
 }
 
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(into = "String"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(into = "String"))]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TextUnit<'a>(&'a [u8]);
 impl<'a> TextUnit<'a> {
+    #[must_use]
     pub const fn new(input: &'a [u8]) -> Self {
         Self(input)
     }
@@ -265,22 +290,30 @@ impl PartialEq<str> for TextUnit<'_> {
 #[cfg(feature = "std")]
 impl std::fmt::Display for TextUnit<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let value: Vec<u8> = self.0.iter().copied().rev().collect();
-        let value = String::from_utf8(value).unwrap_or_default();
-        write!(f, "{}", value)
+        write!(f, "{}", decode_text_unit(self.0))
     }
 }
 
-#[cfg(any(feature = "serde", feature = "std"))]
+#[cfg(feature = "std")]
 impl From<TextUnit<'_>> for String {
     fn from(value: TextUnit<'_>) -> Self {
-        let value: Vec<u8> = value.0.iter().copied().rev().collect();
-        String::from_utf8(value).unwrap_or_default()
+        decode_text_unit(value.0)
+    }
+}
+
+#[cfg(feature = "std")]
+fn decode_text_unit(input: &[u8]) -> String {
+    let bytes: Vec<u8> = input.iter().copied().rev().collect();
+    match String::from_utf8(bytes) {
+        Ok(value) => value,
+        Err(error) => error.into_bytes().into_iter().map(char::from).collect(),
     }
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum Month {
     January,
     February,
@@ -323,7 +356,9 @@ pub type Minute = u8;
 pub type Second = u8;
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum SingleEveryOrInvalid<T> {
     Single(T),
     Every(),
@@ -331,10 +366,13 @@ pub enum SingleEveryOrInvalid<T> {
 }
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum DataType<'a> {
     Text(TextUnit<'a>),
     Number(f64),
+    LossyNumber(f64),
     Date(
         SingleEveryOrInvalid<DayOfMonth>,
         SingleEveryOrInvalid<Month>,
@@ -360,10 +398,17 @@ pub enum DataType<'a> {
         SingleEveryOrInvalid<Minute>,
         SingleEveryOrInvalid<Second>,
     ),
-    ManufacturerSpecific(&'a [u8]),
+    ManufacturerSpecific(
+        #[cfg_attr(
+            feature = "serde",
+            serde(serialize_with = "m_bus_core::serde_hex::serialize")
+        )]
+        &'a [u8],
+    ),
 }
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Data<'a> {
     pub value: Option<DataType<'a>>,
     pub size: usize,
@@ -386,6 +431,7 @@ impl std::fmt::Display for Data<'_> {
         match &self.value {
             Some(value) => match value {
                 DataType::Number(value) => write!(f, "{}", value),
+                DataType::LossyNumber(value) => write!(f, "{}", value),
                 DataType::Date(day, month, year) => write!(f, "{}/{}/{}", day, month, year),
                 DataType::DateTime(day, month, year, hour, minute) => {
                     write!(f, "{}/{}/{} {}:{}:00", day, month, year, hour, minute)
@@ -450,15 +496,23 @@ macro_rules! parse_month {
     };
 }
 
+/// Decode the seven year bits of an EN 13757-3 type F, G or I field.
+///
+/// The year is split across two bytes: `$day_index` carries Y0..Y2 in bits
+/// 5-7 and `$month_index` carries Y3..Y6 in bits 4-7. Their position differs
+/// per type, so both indices are named by the caller.
+///
+/// The field holds two digits and no century, so it is read as 20xx, the same
+/// convention as the libmbus-compatible XML output.
 macro_rules! parse_year {
-    ($input:expr, $mask_byte1:expr, $mask_byte2:expr, $all_value:expr) => {{
-        let byte1 = u16::from($input.get(1).copied().unwrap_or(0) & $mask_byte1);
-        let byte2 = u16::from($input.get(0).copied().unwrap_or(0) & $mask_byte2);
-        let year = byte1.wrapping_shr(1) | byte2.wrapping_shr(5);
-        if year == $all_value {
+    ($input:expr, $day_index:expr, $month_index:expr) => {{
+        let day_byte = u16::from($input.get($day_index).copied().unwrap_or(0) & 0xE0);
+        let month_byte = u16::from($input.get($month_index).copied().unwrap_or(0) & 0xF0);
+        let year = (day_byte >> 5) | (month_byte >> 1);
+        if year == 0x7F {
             SingleEveryOrInvalid::Every()
         } else {
-            SingleEveryOrInvalid::Single(year)
+            SingleEveryOrInvalid::Single(2000 + year)
         }
     }};
 }
@@ -467,13 +521,14 @@ fn bcd_to_value_internal(
     num_digits: usize,
     sign: i32,
     lsb_order: bool,
-) -> Result<Data, DataRecordError> {
-    if data.len() < (num_digits + 1) / 2 {
+) -> Result<Data<'_>, DataRecordError> {
+    if data.len() < num_digits.div_ceil(2) {
         return Err(DataRecordError::InsufficientData);
     }
 
     let mut data_value = 0.0;
     let mut current_weight = 1.0;
+    let mut negative = false;
 
     for i in 0..num_digits {
         let index = if lsb_order {
@@ -489,23 +544,114 @@ fn bcd_to_value_internal(
             (byte >> 4) & 0x0F
         };
 
+        // EN 13757-3: Fh in the most significant digit marks a negative value.
+        // It is a sign marker, not a digit, and contributes nothing to the
+        // magnitude.
+        if digit == 0x0F && i == num_digits - 1 {
+            negative = true;
+            break;
+        }
+
+        if digit > 9 {
+            return Err(DataRecordError::DataInformationError(
+                DataInformationError::InvalidValueInformation,
+            ));
+        }
+
         data_value += f64::from(digit) * current_weight;
         current_weight *= 10.0;
     }
 
-    let signed_value = data_value * sign as f64;
+    let sign = if negative { -sign } else { sign };
+    // Avoid -0.0, which would render as "-0.000000".
+    let signed_value = if data_value == 0.0 {
+        0.0
+    } else {
+        data_value * sign as f64
+    };
 
     Ok(Data {
         value: Some(DataType::Number(signed_value)),
-        size: (num_digits + 1) / 2,
+        size: num_digits.div_ceil(2),
     })
 }
 
+fn integer_to_value_internal(data: &[u8], byte_size: usize) -> Data<'_> {
+    let mut data_value = 0i64;
+    let mut shift = 0;
+    for byte in data.iter().take(if byte_size > 8 { 8 } else { byte_size }) {
+        data_value |= (*byte as i64) << shift;
+        shift += 8;
+    }
+
+    let msb = (data_value >> (shift - 1)) & 1;
+    let data_value = if byte_size < 8 && msb == 1 {
+        -((data_value ^ (2i64.pow(shift) - 1)) + 1)
+    } else {
+        data_value
+    };
+
+    let output = if byte_size > 8 {
+        DataType::LossyNumber(data_value as f64)
+    } else {
+        DataType::Number(data_value as f64)
+    };
+    Data {
+        value: Some(output),
+        size: byte_size,
+    }
+}
+
 impl DataFieldCoding {
+    /// Returns how many bytes the data field occupies, without decoding it.
+    ///
+    /// The length of every coding but [`DataFieldCoding::VariableLength`] is
+    /// fixed by the DIF alone, so `input` is only read for the LVAR byte of a
+    /// variable-length field. Returns `None` when the length cannot be
+    /// determined, which is the case for a missing or reserved LVAR byte and
+    /// for a reserved special function.
+    ///
+    /// This is what [`DataFieldCoding::parse`] would report as
+    /// [`Data::get_size`] on success, so a record whose contents fail to decode
+    /// can still be stepped over.
+    #[must_use]
+    pub fn data_size(&self, input: &[u8]) -> Option<usize> {
+        match self {
+            Self::NoData | Self::SelectionForReadout => Some(0),
+            Self::Integer8Bit | Self::BCD2Digit => Some(1),
+            Self::Integer16Bit | Self::BCD4Digit | Self::DateTypeG => Some(2),
+            Self::Integer24Bit | Self::BCD6Digit => Some(3),
+            Self::Integer32Bit
+            | Self::Real32Bit
+            | Self::BCD8Digit
+            | Self::DateTimeTypeF
+            | Self::DateTimeTypeJ => Some(4),
+            Self::Integer48Bit | Self::BCDDigit12 | Self::DateTimeTypeI => Some(6),
+            Self::Integer64Bit => Some(8),
+            Self::VariableLength => match *input.first()? {
+                length @ 0x00..=0xBF => Some(length as usize + 1),
+                length @ 0xC0..=0xC9 => Some((length - 0xC0) as usize + 1),
+                length @ 0xD0..=0xD9 => Some((length - 0xD0) as usize + 1),
+                length @ 0xE0..=0xEF => Some((length - 0xE0) as usize + 1),
+                length @ 0xF0..=0xF4 => Some(4 * (length - 0xEC) as usize + 1),
+                0xF5 => Some(48 + 1),
+                0xF6 => Some(64 + 1),
+                _ => None,
+            },
+            Self::SpecialFunctions(code) => match code {
+                SpecialFunctions::ManufacturerSpecific | SpecialFunctions::MoreRecordsFollow => {
+                    Some(input.len())
+                }
+                SpecialFunctions::IdleFiller | SpecialFunctions::GlobalReadoutRequest => Some(0),
+                SpecialFunctions::Reserved => None,
+            },
+        }
+    }
+
     pub fn parse<'a>(
         &self,
         input: &'a [u8],
-        fixed_data_header: Option<&'a FixedDataHeader>,
+        fixed_data_header: Option<&'a LongTplHeader>,
     ) -> Result<Data<'a>, DataRecordError> {
         let lsb_order = fixed_data_header.map(|x| x.lsb_order).unwrap_or(false);
 
@@ -524,16 +670,7 @@ impl DataFieldCoding {
                 if $data.len() < $byte_size {
                     return Err(DataRecordError::InsufficientData);
                 }
-                let mut data_value = 0u32;
-                let mut shift = 0;
-                for byte in $data.iter().take($byte_size) {
-                    data_value |= (*byte as u32) << shift;
-                    shift += 8;
-                }
-                Ok(Data {
-                    value: Some(DataType::Number(f64::from(data_value))),
-                    size: $byte_size,
-                })
+                Ok(integer_to_value_internal($data, $byte_size))
             }};
         }
         match self {
@@ -584,47 +721,114 @@ impl DataFieldCoding {
                     0x00..=0xBF => Ok(Data {
                         value: Some(DataType::Text(TextUnit::new(
                             input
-                                .get(1..(length as usize))
+                                .get(1..(1 + length as usize))
                                 .ok_or(DataRecordError::InsufficientData)?,
                         ))),
                         size: length as usize + 1,
                     }),
-                    0xC0..=0xD9 => {
+                    0xC0..=0xC9 => {
                         length -= 0xC0;
-                        let is_negative =
-                            *input.first().ok_or(DataRecordError::InsufficientData)? > 0xC9;
-                        let sign = if is_negative { -1 } else { 1 };
-                        bcd_to_value!(input, length as usize, sign)
+                        let bytes = input
+                            .get(1..(1 + length as usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match bcd_to_value!(bytes, 2 * length as usize) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
                     }
-                    0xE0..=0xE9 => {
+                    0xD0..=0xD9 => {
+                        length -= 0xD0;
+                        let bytes = input
+                            .get(1..(1 + length as usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match bcd_to_value!(bytes, 2 * length as usize, -1) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
+                    }
+                    0xE0..=0xEF => {
                         length -= 0xE0;
-                        todo!("0xE0-0xE9 not implemented for length {}", length);
+                        let bytes = input
+                            .get(1..(1 + length as usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match integer_to_value!(bytes, length as usize) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
                     }
                     0xF0..=0xF4 => {
-                        length -= 0xF0;
-                        todo!("0xF0-0xF4 not implemented for length {}", length);
+                        length -= 0xEC;
+                        let bytes = input
+                            .get(1..(1 + 4 * length as usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match integer_to_value!(bytes, 4 * length as usize) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
                     }
                     0xF5 => {
-                        length = 6;
-                        todo!("0xF5 not implemented for length {}", length);
+                        let bytes = input
+                            .get(1..(1 + 48_usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match integer_to_value!(bytes, 48_usize) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
                     }
                     0xF6 => {
-                        length = 8;
-                        todo!("0xF6 not implemented for length {}", length);
+                        let bytes = input
+                            .get(1..(1 + 64_usize))
+                            .ok_or(DataRecordError::InsufficientData)?;
+                        match integer_to_value!(bytes, 64_usize) {
+                            Ok(data) => Ok(Data {
+                                value: data.value,
+                                size: data.size + 1,
+                            }),
+                            Err(err) => Err(err),
+                        }
                     }
-                    _ => {
-                        todo!(
-                            "Variable length parsing for length: {} is a resreved value",
-                            length
-                        );
-                    }
+                    _ => Err(DataRecordError::DataInformationError(
+                        DataInformationError::Unimplemented {
+                            feature: "Variable length parsing for reserved length values",
+                        },
+                    )),
                 }
             }
 
-            Self::SpecialFunctions(_code) => {
-                // Special functions parsing based on the code
-                todo!()
-            }
+            Self::SpecialFunctions(code) => match code {
+                SpecialFunctions::ManufacturerSpecific | SpecialFunctions::MoreRecordsFollow => {
+                    Ok(Data {
+                        value: Some(DataType::ManufacturerSpecific(input)),
+                        size: input.len(),
+                    })
+                }
+                SpecialFunctions::IdleFiller => Ok(Data {
+                    value: None,
+                    size: 0,
+                }),
+                SpecialFunctions::GlobalReadoutRequest => Ok(Data {
+                    value: None,
+                    size: 0,
+                }),
+                SpecialFunctions::Reserved => Err(DataRecordError::DataInformationError(
+                    DataInformationError::InvalidValueInformation,
+                )),
+            },
 
             Self::DateTypeG => {
                 let day = parse_single_or_every!(
@@ -634,7 +838,7 @@ impl DataFieldCoding {
                     0
                 );
                 let month = parse_month!(input.get(1).ok_or(DataRecordError::InsufficientData)?);
-                let year = parse_year!(input, 0xF0, 0xE0, 0x7F);
+                let year = parse_year!(input, 0, 1);
 
                 Ok(Data {
                     value: Some(DataType::Date(day, month, year)),
@@ -661,7 +865,7 @@ impl DataFieldCoding {
                     0
                 );
                 let month = parse_month!(input.get(3).ok_or(DataRecordError::InsufficientData)?);
-                let year = parse_year!(input, 0xF0, 0xE0, 0x7F);
+                let year = parse_year!(input, 2, 3);
 
                 Ok(Data {
                     value: Some(DataType::DateTime(day, month, year, hour, minutes)),
@@ -725,7 +929,7 @@ impl DataFieldCoding {
                     0
                 );
                 let months = parse_month!(input.get(4).ok_or(DataRecordError::InsufficientData)?);
-                let year = parse_year!(input, 0xF0, 0xE0, 0x7F);
+                let year = parse_year!(input, 3, 4);
 
                 Ok(Data {
                     value: Some(DataType::DateTimeWithSeconds(
@@ -746,6 +950,8 @@ impl DataInformation {
 }
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum FunctionField {
     InstantaneousValue,
     MaximumValue,
@@ -766,6 +972,8 @@ impl std::fmt::Display for FunctionField {
 }
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum SpecialFunctions {
     ManufacturerSpecific,
     MoreRecordsFollow,
@@ -774,6 +982,7 @@ pub enum SpecialFunctions {
     GlobalReadoutRequest,
 }
 
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct Value {
     pub data: f64,
     pub byte_size: usize,
@@ -781,6 +990,8 @@ pub struct Value {
 
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[non_exhaustive]
 pub enum DataFieldCoding {
     NoData,
     Integer8Bit,
@@ -856,6 +1067,18 @@ mod tests {
     }
 
     #[test]
+    fn unextended_dif_does_not_interpret_following_bytes_as_extensions() {
+        for dif in 0..=0x7f {
+            let mut bytes = [0xff; MAXIMUM_DATA_INFORMATION_SIZE + 3];
+            bytes[0] = dif;
+            let block = DataInformationBlock::try_from(bytes.as_slice()).unwrap();
+            assert_eq!(block.data_information_field.data, dif);
+            assert_eq!(block.get_size(), 1);
+            assert!(block.data_information_field_extension.is_none());
+        }
+    }
+
+    #[test]
     fn test_complex_data_information() {
         let data = [0xc4, 0x80, 0x40];
         let result = DataInformationBlock::try_from(data.as_slice());
@@ -879,6 +1102,33 @@ mod tests {
         let original_value = [0x6c, 0x61, 0x67, 0x69];
         let parsed = TextUnit::new(&original_value);
         assert_eq!(&parsed, "igal");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn text_unit_latin1_swedish_characters() {
+        // "Malmö" in Latin-1 (reversed byte order per M-Bus)
+        let bytes = [0xF6, 0x6D, 0x6C, 0x61, 0x4D]; // ö m l a M
+        let text = TextUnit::new(&bytes);
+        assert_eq!(String::from(text), "Malmö");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn text_unit_latin1_superscript_three() {
+        // "m³/h" in Latin-1 (reversed byte order per M-Bus)
+        let bytes = [0x68, 0x2F, 0xB3, 0x6D]; // h / ³ m
+        let text = TextUnit::new(&bytes);
+        assert_eq!(String::from(text), "m³/h");
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn text_unit_utf8_superscript_three() {
+        // "m³/h" in UTF-8 (reversed byte order per M-Bus)
+        let bytes = [0x68, 0x2F, 0xB3, 0xC2, 0x6D]; // h / UTF-8(³) m
+        let text = TextUnit::new(&bytes);
+        assert_eq!(String::from(text), "m³/h");
     }
 
     #[test]
@@ -923,6 +1173,228 @@ mod tests {
             Data {
                 value: Some(DataType::Number(987654.0)),
                 size: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_bcd_to_value_invalid() {
+        let data = [0x5A, 0x76, 0x98];
+        let result = bcd_to_value_internal(&data, 6, 1, false);
+        assert!(matches!(
+            result,
+            Err(DataRecordError::DataInformationError(
+                DataInformationError::InvalidValueInformation
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_bcd_to_value_negative_sign_nibble() {
+        // EN 13757-3: Fh in the most significant digit is a sign marker.
+        // SLB_CF-Compact-Integral-MK-MaXX carries -18 as `18 00 F0`.
+        let data = [0x18, 0x00, 0xF0];
+        let result = bcd_to_value_internal(&data, 6, 1, false);
+        assert_eq!(
+            result.unwrap(),
+            Data {
+                value: Some(DataType::Number(-18.0)),
+                size: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_bcd_to_value_negative_zero_is_positive_zero() {
+        let data = [0x00, 0x00, 0xF0];
+        let result = bcd_to_value_internal(&data, 6, 1, false);
+        let Some(DataType::Number(value)) = result.unwrap().value else {
+            panic!("expected a number");
+        };
+        assert!(value == 0.0 && value.is_sign_positive());
+    }
+
+    #[test]
+    fn test_bcd_to_value_sign_nibble_only_in_most_significant_digit() {
+        // An Fh anywhere but the top digit is still invalid BCD.
+        let data = [0x18, 0xF0, 0x00];
+        let result = bcd_to_value_internal(&data, 6, 1, false);
+        assert!(matches!(
+            result,
+            Err(DataRecordError::DataInformationError(
+                DataInformationError::InvalidValueInformation
+            ))
+        ));
+    }
+
+    #[test]
+    fn test_data_size_matches_parsed_size() {
+        // `data_size` is the resynchronisation path for records that fail to
+        // decode, so it must not drift from what `parse` consumes.
+        let payload = [0x01_u8; 80];
+        let codings = [
+            DataFieldCoding::NoData,
+            DataFieldCoding::Integer8Bit,
+            DataFieldCoding::Integer16Bit,
+            DataFieldCoding::Integer24Bit,
+            DataFieldCoding::Integer32Bit,
+            DataFieldCoding::Real32Bit,
+            DataFieldCoding::Integer48Bit,
+            DataFieldCoding::Integer64Bit,
+            DataFieldCoding::SelectionForReadout,
+            DataFieldCoding::BCD2Digit,
+            DataFieldCoding::BCD4Digit,
+            DataFieldCoding::BCD6Digit,
+            DataFieldCoding::BCD8Digit,
+            DataFieldCoding::BCDDigit12,
+            DataFieldCoding::DateTypeG,
+            DataFieldCoding::DateTimeTypeF,
+            DataFieldCoding::DateTimeTypeJ,
+            DataFieldCoding::DateTimeTypeI,
+        ];
+
+        for coding in codings {
+            let parsed = coding.parse(&payload, None).expect("coding parses");
+            assert_eq!(
+                coding.data_size(&payload),
+                Some(parsed.get_size()),
+                "data_size disagrees with parse for {coding:?}"
+            );
+        }
+
+        // Variable length: the LVAR byte drives both.
+        for lvar in [0x03_u8, 0xC3, 0xD3, 0xE3, 0xF0, 0xF5, 0xF6] {
+            let mut input = [0x00_u8; 80];
+            input[0] = lvar;
+            let parsed = DataFieldCoding::VariableLength
+                .parse(&input, None)
+                .expect("variable length parses");
+            assert_eq!(
+                DataFieldCoding::VariableLength.data_size(&input),
+                Some(parsed.get_size()),
+                "data_size disagrees with parse for LVAR {lvar:#04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_date_type_g_reads_the_full_year() {
+        // 8C 11: day 12, month 1, year bits 0b0001_100 = 12 -> 2012.
+        assert_eq!(
+            DataFieldCoding::DateTypeG.parse(&[0x8C, 0x11], None),
+            Ok(Data {
+                value: Some(DataType::Date(
+                    SingleEveryOrInvalid::Single(12),
+                    SingleEveryOrInvalid::Single(Month::January),
+                    SingleEveryOrInvalid::Single(2012),
+                )),
+                size: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_date_time_type_f_reads_the_year_from_the_day_and_month_bytes() {
+        // 2D 0D 0F 33: 15 March 2024, 13:45. The year bits live in the third
+        // and fourth byte, not in the minute and hour bytes.
+        assert_eq!(
+            DataFieldCoding::DateTimeTypeF.parse(&[0x2D, 0x0D, 0x0F, 0x33], None),
+            Ok(Data {
+                value: Some(DataType::DateTime(
+                    SingleEveryOrInvalid::Single(15),
+                    SingleEveryOrInvalid::Single(Month::March),
+                    SingleEveryOrInvalid::Single(2024),
+                    SingleEveryOrInvalid::Single(13),
+                    SingleEveryOrInvalid::Single(45),
+                )),
+                size: 4,
+            })
+        );
+    }
+
+    #[test]
+    fn test_date_time_type_i_reads_the_year_from_the_day_and_month_bytes() {
+        // 36 35 C0 53 39 00: 19 September 2026, 00:53:54.
+        assert_eq!(
+            DataFieldCoding::DateTimeTypeI.parse(&[0x36, 0x35, 0xC0, 0x53, 0x39, 0x00], None),
+            Ok(Data {
+                value: Some(DataType::DateTimeWithSeconds(
+                    SingleEveryOrInvalid::Single(19),
+                    SingleEveryOrInvalid::Single(Month::September),
+                    SingleEveryOrInvalid::Single(2026),
+                    SingleEveryOrInvalid::Single(0),
+                    SingleEveryOrInvalid::Single(53),
+                    SingleEveryOrInvalid::Single(54),
+                )),
+                size: 6,
+            })
+        );
+    }
+
+    #[test]
+    fn test_date_type_g_every_year_wildcard() {
+        // All seven year bits set is the "every year" wildcard, not year 2127.
+        assert_eq!(
+            DataFieldCoding::DateTypeG.parse(&[0xEC, 0xF1], None),
+            Ok(Data {
+                value: Some(DataType::Date(
+                    SingleEveryOrInvalid::Single(12),
+                    SingleEveryOrInvalid::Single(Month::January),
+                    SingleEveryOrInvalid::Every(),
+                )),
+                size: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn test_integer_to_value_8_bit_positive() {
+        let data = [0x7F];
+        let result = integer_to_value_internal(&data, 1);
+        assert_eq!(
+            result,
+            Data {
+                value: Some(DataType::Number(127.0)),
+                size: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_integer_to_value_8_bit_negative() {
+        let data = [0xFF];
+        let result = integer_to_value_internal(&data, 1);
+        assert_eq!(
+            result,
+            Data {
+                value: Some(DataType::Number(-1.0)),
+                size: 1
+            }
+        );
+    }
+
+    #[test]
+    fn test_integer_to_value_64_bit_positive() {
+        let data = [0xFA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let result = integer_to_value_internal(&data, 8);
+        assert_eq!(
+            result,
+            Data {
+                value: Some(DataType::Number(250.0)),
+                size: 8
+            }
+        );
+    }
+
+    #[test]
+    fn test_integer_to_value_64_bit_negative() {
+        let data = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let result = integer_to_value_internal(&data, 8);
+        assert_eq!(
+            result,
+            Data {
+                value: Some(DataType::Number(-1.0)),
+                size: 8
             }
         );
     }

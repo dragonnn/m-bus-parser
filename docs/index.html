@@ -3,10 +3,8 @@
 
 <head>
     <meta charset="utf-8">
-    <title>Wired M-Bus Parser</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.0/styles/default.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.0/highlight.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.5.0/languages/json.min.js"></script>
+    <title>M-Bus Parser (Wired & Wireless)</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -17,18 +15,72 @@
 
         .header {
             display: flex;
-            align-items: center;
-            justify-content: center;
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: flex-start;
             margin-bottom: 20px;
+            max-width: 1100px;
+            margin-left: auto;
+            margin-right: auto;
         }
 
-        .header img {
-            margin-right: 10px;
+        .header-text {
+            text-align: left;
+            margin-left: 16px;
         }
 
-        h1 {
-            color: #333;
+        .header-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            margin-left: 0;
+        }
+
+        .header-text h1 {
             margin: 0;
+            font-size: 2em;
+            color: #333;
+        }
+
+        .header-text .subtitle {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 4px;
+        }
+
+        .header-text .subtitle a {
+            color: #666;
+            text-decoration: none;
+        }
+
+        .header-text .subtitle a:hover,
+        .header-text .subtitle a:focus-visible {
+            color: #333;
+            text-decoration: underline;
+        }
+
+        .project-badges {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px;
+            margin-top: 8px;
+        }
+
+        .project-badges a {
+            display: inline-flex;
+            line-height: 0;
+        }
+
+        .project-badges img {
+            height: 20px;
+        }
+
+        .parser-version {
+            font-size: 0.7em;
+            color: #888;
+            font-weight: normal;
+            margin-left: 8px;
         }
 
         form {
@@ -56,6 +108,45 @@
             font-family: monospace;
         }
 
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            margin-bottom: 10px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+
+        .key-input-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+
+        .key-help {
+            font-size: 0.85em;
+            color: #666;
+            margin-top: 4px;
+            margin-bottom: 8px;
+        }
+
+        .key-toggle {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px;
+            color: #666;
+        }
+
+        .key-toggle:hover {
+            color: #333;
+        }
+
         input[type="button"] {
             background-color: #4CAF50;
             color: white;
@@ -71,20 +162,658 @@
         }
 
         pre {
-            background: #f0f0f0;
-            padding: 10px;
-            border-radius: 4px;
-            white-space: pre-wrap;
-            word-wrap: break-word;
+            margin: 0;
+            white-space: pre;
+            overflow: visible;
+            overflow-wrap: normal;
         }
 
         #output {
-            margin-top: 20px;
+            min-height: 84px;
+            padding-top: 48px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #fff;
+            color: #222;
+        }
+
+        #output-container {
+            position: relative;
             max-width: 1100px;
             margin: 20px auto 0;
-            padding: 20px;
+            background: #fff;
             border-radius: 8px;
             box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .code-viewer {
+            border-top: 1px solid #d0d7de;
+            background: #fff;
+            color: #0d1117;
+        }
+
+        .code-scroll {
+            display: grid;
+            grid-template-columns: max-content minmax(max-content, 1fr);
+            max-width: 100%;
+            overflow: auto;
+            scrollbar-gutter: stable;
+            background: #fff;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-size: 13px;
+            line-height: 1.55;
+        }
+
+        .code-scroll:focus-visible {
+            outline: 3px solid #0969da;
+            outline-offset: -3px;
+        }
+
+        .line-gutter {
+            position: sticky;
+            left: 0;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            min-width: 3ch;
+            padding: 12px 10px;
+            border-right: 1px solid #8c959f;
+            background: #fff;
+            color: #4b5563;
+            text-align: right;
+            user-select: none;
+            pointer-events: none;
+        }
+
+        .line-gutter span {
+            display: block;
+            flex: 0 0 auto;
+        }
+
+        .code-source {
+            min-width: max-content;
+            padding: 12px 16px;
+            border-radius: 0;
+            background: #fff;
+            color: #0d1117;
+            font: inherit;
+            line-height: inherit;
+        }
+
+        .code-source code {
+            font: inherit;
+        }
+
+        .code-source [class*="syn-"] {
+            color: #0d1117;
+        }
+
+        .code-source .syn-comment {
+            color: #4b5563;
+            font-style: italic;
+        }
+
+        .code-source .syn-string,
+        .code-source .syn-quoted {
+            color: #0a3069;
+        }
+
+        .code-source .syn-constant,
+        .code-source .syn-numeric {
+            color: #953800;
+        }
+
+        .code-source .syn-keyword,
+        .code-source .syn-storage {
+            color: #a0111f;
+            font-weight: 600;
+        }
+
+        .code-source .syn-entity,
+        .code-source .syn-tag {
+            color: #0349b4;
+        }
+
+        .code-source .syn-variable,
+        .code-source .syn-attribute {
+            color: #622cbc;
+        }
+
+        .code-source .syn-support,
+        .code-source .syn-type {
+            color: #024c1a;
+        }
+
+        .code-source .syn-csv-column-0 { color: #0349b4; }
+        .code-source .syn-csv-column-1 { color: #024c1a; }
+        .code-source .syn-csv-column-2 { color: #a0111f; }
+        .code-source .syn-csv-column-3 { color: #622cbc; }
+        .code-source .syn-csv-column-4 { color: #953800; }
+        .code-source .syn-csv-column-5 { color: #005a5a; }
+        .code-source .syn-csv-column-6 { color: #704800; }
+        .code-source .syn-csv-column-7 { color: #3b3f99; }
+
+        .output-error {
+            margin: 0;
+            padding: 14px 18px;
+            border-top: 1px solid #cf222e;
+            background: #ffebe9;
+            color: #82071e;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            white-space: pre-wrap;
+        }
+
+        #copy_output {
+            position: absolute;
+            top: 10px;
+            right: 45px; /* Make space for download button */
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+            cursor: pointer;
+            padding: 8px;
+            z-index: 10;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        #download_output {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: #fff;
+            border: 1px solid #ccc;
+            border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+            cursor: pointer;
+            padding: 8px;
+            z-index: 10;
+            transition: background 0.2s, box-shadow 0.2s;
+        }
+
+        #copy_output:hover,
+        #download_output:hover {
+            background: #f0f0f0;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        #copy_output svg,
+        #download_output svg {
+            display: block;
+        }
+
+        body.dark-mode #share_button svg {
+            stroke: #aaa;
+        }
+
+        body.dark-mode {
+            background-color: #181a1b;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .header-text h1 {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode .header-text .subtitle,
+        body.dark-mode .parser-version {
+            color: #aaa;
+        }
+
+        body.dark-mode .header-text .subtitle a {
+            color: #aaa;
+        }
+
+        body.dark-mode .header-text .subtitle a:hover,
+        body.dark-mode .header-text .subtitle a:focus-visible {
+            color: #fff;
+        }
+
+        body.dark-mode form {
+            background: #23272a;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+        }
+
+        body.dark-mode #output-container {
+            background: #23272a;
+            border-radius: 8px;
+        }
+
+        body.dark-mode textarea {
+            background: #23272a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+        }
+
+        body.dark-mode input[type="text"],
+        body.dark-mode input[type="password"] {
+            background: #23272a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+        }
+
+        body.dark-mode .key-help {
+            color: #aaa;
+        }
+
+        body.dark-mode .key-toggle {
+            color: #aaa;
+        }
+
+        body.dark-mode .key-toggle:hover {
+            color: #e0e0e0;
+        }
+
+        body.dark-mode pre {
+            background: #23272a;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode #output {
+            background: #0d1117;
+            color: #e0e0e0;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.4);
+        }
+
+        body.dark-mode #copy_output,
+        body.dark-mode #download_output {
+            background: #23272a;
+            border: 1px solid #444;
+        }
+
+        body.dark-mode #copy_output:hover,
+        body.dark-mode #download_output:hover {
+            background: #181a1b;
+        }
+
+        body.dark-mode input[type="button"] {
+            background-color: #444;
+            color: #e0e0e0;
+        }
+
+        body.dark-mode input[type="button"]:hover {
+            background-color: #333;
+        }
+
+        body.dark-mode .code-viewer,
+        body.dark-mode .code-scroll,
+        body.dark-mode .code-source,
+        body.dark-mode .line-gutter {
+            background: #0d1117;
+        }
+
+        body.dark-mode .code-viewer {
+            border-top-color: #6e7681;
+        }
+
+        body.dark-mode .line-gutter {
+            border-right-color: #6e7681;
+            color: #c7cdd5;
+        }
+
+        body.dark-mode .code-scroll:focus-visible {
+            outline-color: #58a6ff;
+        }
+
+        body.dark-mode .code-source,
+        body.dark-mode .code-source [class*="syn-"] {
+            color: #f0f3f6;
+        }
+
+        body.dark-mode .code-source .syn-comment {
+            color: #c7cdd5;
+        }
+
+        body.dark-mode .code-source .syn-string,
+        body.dark-mode .code-source .syn-quoted {
+            color: #a5d6ff;
+        }
+
+        body.dark-mode .code-source .syn-constant,
+        body.dark-mode .code-source .syn-numeric {
+            color: #ffb77c;
+        }
+
+        body.dark-mode .code-source .syn-keyword,
+        body.dark-mode .code-source .syn-storage {
+            color: #ff9492;
+        }
+
+        body.dark-mode .code-source .syn-entity,
+        body.dark-mode .code-source .syn-tag {
+            color: #71b7ff;
+        }
+
+        body.dark-mode .code-source .syn-variable,
+        body.dark-mode .code-source .syn-attribute {
+            color: #cb9eff;
+        }
+
+        body.dark-mode .code-source .syn-support,
+        body.dark-mode .code-source .syn-type {
+            color: #6de080;
+        }
+
+        body.dark-mode .code-source .syn-csv-column-0 { color: #71b7ff; }
+        body.dark-mode .code-source .syn-csv-column-1 { color: #6de080; }
+        body.dark-mode .code-source .syn-csv-column-2 { color: #ff9492; }
+        body.dark-mode .code-source .syn-csv-column-3 { color: #cb9eff; }
+        body.dark-mode .code-source .syn-csv-column-4 { color: #ffb77c; }
+        body.dark-mode .code-source .syn-csv-column-5 { color: #5eead4; }
+        body.dark-mode .code-source .syn-csv-column-6 { color: #f8d866; }
+        body.dark-mode .code-source .syn-csv-column-7 { color: #b6c7ff; }
+
+        body.dark-mode .output-error {
+            border-top-color: #ff7b72;
+            background: #490202;
+            color: #ffb3ad;
+        }
+
+        /* ── Interactive Hex Viewer ─────────────────────────── */
+        .hex-viewer {
+            display: flex;
+            gap: 0;
+            font-family: 'Menlo', 'Consolas', 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+            min-height: 200px;
+            overflow: hidden;
+        }
+        .hex-viewer-left {
+            box-sizing: border-box;
+            flex: 1;
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: auto;
+            padding: 40px 12px 12px;
+        }
+        .hex-viewer-right {
+            box-sizing: border-box;
+            width: 420px;
+            min-width: 340px;
+            border-left: 1px solid #ddd;
+            overflow-y: auto;
+            max-height: 600px;
+            padding: 40px 0 8px;
+        }
+        body.dark-mode .hex-viewer-right {
+            border-left-color: #444;
+        }
+
+        /* Hex grid */
+        .hex-grid {
+            display: inline-block;
+            min-width: max-content;
+        }
+        .hex-header {
+            color: #888;
+            margin-bottom: 4px;
+            user-select: none;
+        }
+        .hex-header,
+        .hex-row {
+            display: grid;
+            grid-template-columns: 56px repeat(8, 21px) 8px repeat(8, 21px) 14px repeat(16, 10px);
+            align-items: center;
+            margin: 0;
+            padding: 0;
+            white-space: normal;
+        }
+        .hex-offset {
+            color: #888;
+            padding-right: 8px;
+            text-align: right;
+            user-select: none;
+        }
+        .hex-byte {
+            display: block;
+            box-sizing: border-box;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 2px;
+            transition: outline 0.1s;
+        }
+        .hex-byte:hover {
+            outline: 2px solid #666;
+            outline-offset: -1px;
+        }
+        .hex-gap {
+            display: block;
+        }
+        .hex-ascii-sep {
+            display: block;
+        }
+        .hex-ascii {
+            display: block;
+            box-sizing: border-box;
+            text-align: center;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+        .hex-ascii-label {
+            grid-column: span 16;
+            text-align: left;
+        }
+        .hex-byte.highlight, .hex-ascii.highlight {
+            outline: 2px solid #1565c0 !important;
+            outline-offset: -1px;
+        }
+        body.dark-mode .hex-byte.highlight, body.dark-mode .hex-ascii.highlight {
+            outline-color: #64b5f6 !important;
+        }
+
+        /* Layer colors */
+        .hex-layer-frame      { background: #bbdefb; color: #0d47a1; }
+        .hex-layer-appheader  { background: #c8e6c9; color: #1b5e20; }
+        .hex-layer-record     { background: #fff9c4; color: #f57f17; }
+        body.dark-mode .hex-layer-frame     { background: #1a3a5c; color: #90caf9; }
+        body.dark-mode .hex-layer-appheader { background: #1b3d1f; color: #a5d6a7; }
+        body.dark-mode .hex-layer-record    { background: #3e3510; color: #fff176; }
+
+        /* Record field text colors */
+        .hex-kind-dif {
+            color: #b71c1c;
+        }
+        .hex-kind-vif {
+            color: #0b5cad;
+        }
+        .hex-kind-data {
+            color: #4a148c;
+        }
+        body.dark-mode .hex-kind-dif {
+            color: #ff8a80;
+        }
+        body.dark-mode .hex-kind-vif {
+            color: #82b1ff;
+        }
+        body.dark-mode .hex-kind-data {
+            color: #ce93d8;
+        }
+
+        /* Segment tooltip */
+        .hex-tooltip {
+            position: fixed;
+            background: #333;
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            max-width: 350px;
+            white-space: nowrap;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            display: none;
+        }
+
+        /* Tree panel */
+        .hex-tree-section {
+            padding: 0;
+            margin: 0;
+        }
+        .hex-tree-layer {
+            font-weight: bold;
+            font-size: 12px;
+            padding: 6px 12px 4px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            user-select: none;
+        }
+        body.dark-mode .hex-tree-layer {
+            color: #aaa;
+        }
+        .hex-tree-group {
+            margin: 0;
+            padding: 0;
+        }
+        .hex-tree-group-header {
+            padding: 4px 12px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            user-select: none;
+            border-radius: 4px;
+            margin: 0 4px;
+        }
+        .hex-tree-group-header:hover {
+            background: #e3f2fd;
+        }
+        body.dark-mode .hex-tree-group-header:hover {
+            background: #1a3a5c;
+        }
+        .hex-tree-group-header .arrow {
+            display: inline-block;
+            transition: transform 0.15s;
+            font-size: 10px;
+            width: 12px;
+        }
+        .hex-tree-group-header.collapsed .arrow {
+            transform: rotate(-90deg);
+        }
+        .hex-tree-group-body {
+            padding: 0;
+            margin: 0;
+        }
+        .hex-tree-group-body.hidden {
+            display: none;
+        }
+        .hex-tree-item {
+            padding: 2px 12px 2px 30px;
+            cursor: pointer;
+            font-size: 12px;
+            border-radius: 4px;
+            margin: 0 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .hex-tree-item:hover,
+        .hex-tree-item.active {
+            background: #e3f2fd;
+        }
+        body.dark-mode .hex-tree-item:hover,
+        body.dark-mode .hex-tree-item.active {
+            background: #1a3a5c;
+        }
+        .hex-tree-item .tree-kind {
+            color: #666;
+            flex-shrink: 0;
+        }
+        .hex-tree-item .tree-detail {
+            color: #333;
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        body.dark-mode .hex-tree-item .tree-kind {
+            color: #aaa;
+        }
+        body.dark-mode .hex-tree-item .tree-detail {
+            color: #e0e0e0;
+        }
+        .hex-tree-item.hex-kind-dif .tree-kind,
+        .hex-tree-item.hex-kind-dif .tree-detail,
+        .hex-tree-item.hex-kind-vif .tree-kind,
+        .hex-tree-item.hex-kind-vif .tree-detail,
+        .hex-tree-item.hex-kind-data .tree-kind,
+        .hex-tree-item.hex-kind-data .tree-detail {
+            color: inherit;
+        }
+        .hex-tree-item .tree-offset {
+            color: #999;
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+        .hex-tree-copy {
+            width: 20px;
+            height: 20px;
+            padding: 2px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: #777;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .hex-tree-copy:hover,
+        .hex-tree-copy.copied {
+            background: #d7ecff;
+            color: #1565c0;
+        }
+        body.dark-mode .hex-tree-copy {
+            color: #aaa;
+        }
+        body.dark-mode .hex-tree-copy:hover,
+        body.dark-mode .hex-tree-copy.copied {
+            background: #1a3a5c;
+            color: #90caf9;
+        }
+        .hex-tree-copy svg {
+            width: 14px;
+            height: 14px;
+            display: block;
+            pointer-events: none;
+        }
+
+        @media (max-width: 800px) {
+            .hex-viewer {
+                flex-direction: column;
+            }
+            .hex-viewer-right {
+                width: 100%;
+                border-left: none;
+                border-top: 1px solid #ddd;
+                max-height: 400px;
+            }
+        }
+
+        @media (forced-colors: active) {
+            .code-viewer,
+            .code-scroll,
+            .code-source,
+            .line-gutter,
+            .code-source span {
+                background: Canvas !important;
+                color: CanvasText !important;
+                forced-color-adjust: auto;
+            }
+
+            .line-gutter {
+                border-right: 1px solid CanvasText;
+            }
+
+            .code-scroll:focus-visible {
+                outline-color: Highlight;
+            }
         }
     </style>
 </head>
@@ -92,22 +821,192 @@
 <body>
     <div class="header">
         <img id="banner" src="meter.png" alt="Meter Banner">
-        <h1> Online M-Bus parser (wired) <i>https://maebli.github.io/m-bus-parser</i></h1>
+        <div class="header-text">
+            <h1>Online M-Bus Parser <span class="parser-version" id="parser-version"></span></h1>
+            <div class="subtitle">
+                <a href="https://maebli.github.io/m-bus-parser/">maebli.github.io/m-bus-parser</a> •
+                <a href="https://github.com/maebli" target="_blank" rel="noopener noreferrer">Michael Aebli</a> •
+                <a href="./dev/bench/">Benchmarks</a>
+            </div>
+            <div class="project-badges" aria-label="Project status">
+                <a href="https://crates.io/crates/m-bus-parser" target="_blank" rel="noopener noreferrer">
+                    <img src="https://img.shields.io/crates/v/m-bus-parser.svg" alt="m-bus-parser version on crates.io">
+                </a>
+                <a href="https://crates.io/crates/m-bus-parser" target="_blank" rel="noopener noreferrer">
+                    <img src="https://img.shields.io/crates/d/m-bus-parser.svg" alt="m-bus-parser downloads on crates.io">
+                </a>
+                <a href="https://docs.rs/m-bus-parser" target="_blank" rel="noopener noreferrer">
+                    <img src="https://docs.rs/m-bus-parser/badge.svg" alt="m-bus-parser documentation on docs.rs">
+                </a>
+                <a href="https://github.com/maebli/m-bus-parser/actions/workflows/rust.yml" target="_blank" rel="noopener noreferrer">
+                    <img src="https://github.com/maebli/m-bus-parser/actions/workflows/rust.yml/badge.svg" alt="Rust build status">
+                </a>
+                <a href="https://github.com/maebli/m-bus-parser/blob/main/LICENSE" target="_blank" rel="noopener noreferrer">
+                    <img src="https://img.shields.io/crates/l/m-bus-parser.svg" alt="m-bus-parser license">
+                </a>
+            </div>
+        </div>
+        <div class="header-controls">
+            <button id="dark_mode_toggle" title="Toggle dark mode" style="background:none;border:none;cursor:pointer;padding:8px;">
+                <svg id="dark_mode_icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="5" />
+                    <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+                </svg>
+            </button>
+            <button id="share_button" title="Copy share link" style="background:none;border:none;cursor:pointer;padding:8px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+            </button>
+            <button id="report_issue" title="Report Issue" style="background:none;border:none;cursor:pointer;padding:8px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#e74c3c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <circle cx="12" cy="16" r="1" />
+                </svg>
+            </button>
+        </div>
     </div>
     <form>
         <label for="inputstring">Input String:</label>
         <textarea rows="5" cols="80"
             id="inputstring">68 3D 3D 68 08 01 72 00 51 20 02 82 4D 02 04 00 88 00 00 04 07 00 00 00 00 0C 15 03 00 00 00 0B 2E 00 00 00 0B 3B 00 00 00 0A 5A 88 12 0A 5E 16 05 0B 61 23 77 00 02 6C 8C 11 02 27 37 0D 0F 60 00 67 16</textarea>
+
+        <label for="aeskey">AES-128 Decryption Key (optional):</label>
+        <div class="key-input-container">
+            <input type="password" id="aeskey" placeholder="Enter 32 hex characters (16 bytes)" maxlength="32" pattern="[0-9A-Fa-f]{32}" />
+            <button type="button" class="key-toggle" id="key-toggle" title="Show/Hide key">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+            </button>
+        </div>
+        <div class="key-help">Leave empty for unencrypted frames. Format: 32 hexadecimal characters (e.g., 0123456789ABCDEF0123456789ABCDEF)</div>
+
         <input id="parse_json" type="button" value="Parse to JSON" />
         <input id="parse_yaml" type="button" value="Parse to YAML" />
         <input id="parse_table" type="button" value="Parse to Table" />
+        <input id="parse_csv" type="button" value="Parse to CSV" />
+        <input id="parse_mermaid" type="button" value="Parse to Diagram" />
+        <input id="parse_xml" type="button" value="Parse to XML" />
+        <input id="parse_hexview" type="button" value="Hex View" />
     </form>
-    <pre id="output"></pre>
+    <div id="output-container">
+        <button id="copy_output" title="Copy Output">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1-2 2v1" />
+            </svg>
+        </button>
+        <a id="download_output" title="Download Output" href="#" download="">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+        </a>
+        <div id="output" aria-live="polite"></div>
+    </div>
     <script type="module">
-        import init, { m_bus_parse } from "./m_bus_parser_wasm_pack.js";
+        import init, { m_bus_highlight, m_bus_render, version } from "./m_bus_parser_wasm_pack.js?v=0.4.3";
+
+        let currentFormat = "json";
+        let lastTableWidth = null;
+        let tableResizeTimer = null;
+
+        mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'default' });
+
+        function createLineGutter(source) {
+            const gutter = document.createElement('div');
+            gutter.className = 'line-gutter';
+            gutter.setAttribute('aria-hidden', 'true');
+            const lineCount = Math.max(1, source.split('\n').length);
+            for (let line = 1; line <= lineCount; line += 1) {
+                const number = document.createElement('span');
+                number.textContent = String(line);
+                gutter.appendChild(number);
+            }
+            return gutter;
+        }
+
+        function renderCodeViewer(container, source, language, label) {
+            source = String(source ?? '');
+            const viewer = document.createElement('div');
+            viewer.className = 'code-viewer';
+
+            const scroll = document.createElement('div');
+            scroll.className = 'code-scroll';
+            scroll.setAttribute('role', 'region');
+            scroll.setAttribute('aria-label', label);
+            scroll.tabIndex = 0;
+
+            const pre = document.createElement('pre');
+            pre.className = 'code-source';
+            const code = document.createElement('code');
+            try {
+                // syntect escapes source text before emitting this restricted span-only markup.
+                code.innerHTML = m_bus_highlight(source, language);
+            } catch (error) {
+                console.warn('Syntax highlighting unavailable; using plaintext output.', error);
+                code.textContent = source;
+            }
+            pre.appendChild(code);
+            scroll.append(createLineGutter(source), pre);
+            viewer.appendChild(scroll);
+            container.replaceChildren(viewer);
+            return viewer;
+        }
 
         async function setup() {
-            await init(); // Ensure the WASM module is initialized
+            // Dark mode setup
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const savedMode = localStorage.getItem('darkMode');
+            const body = document.body;
+            const icon = document.getElementById('dark_mode_icon');
+            function setDarkMode(on) {
+                if (on) {
+                    body.classList.add('dark-mode');
+                    icon.innerHTML = '<path d="M21.64 13.64A9 9 0 1 1 12 3v0a7 7 0 0 0 9.64 10.64z" />';
+                } else {
+                    body.classList.remove('dark-mode');
+                    icon.innerHTML = '<circle cx="12" cy="12" r="5" /><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />';
+                }
+            }
+            let darkMode = savedMode === null ? prefersDark : savedMode === 'true';
+            setDarkMode(darkMode);
+            document.getElementById('dark_mode_toggle').addEventListener('click', () => {
+                darkMode = !body.classList.contains('dark-mode');
+                setDarkMode(darkMode);
+                localStorage.setItem('darkMode', darkMode);
+            });
+
+            // Key visibility toggle
+            const keyInput = document.getElementById('aeskey');
+            const keyToggle = document.getElementById('key-toggle');
+            keyToggle.addEventListener('click', () => {
+                const type = keyInput.getAttribute('type');
+                if (type === 'password') {
+                    keyInput.setAttribute('type', 'text');
+                    keyToggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>';
+                } else {
+                    keyInput.setAttribute('type', 'password');
+                    keyToggle.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+                }
+            });
+
+            await init(new URL("./m_bus_parser_wasm_pack_bg.wasm?v=0.4.3", import.meta.url));
+            document.getElementById('parser-version').textContent = 'v' + version();
+
+            // Load data and format from URL params and auto-parse if present
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlData = urlParams.get('data');
+            const urlFormat = urlParams.get('format');
+            if (urlData) {
+                document.getElementById('inputstring').value = urlData;
+                parseInput(urlFormat === 'table_format' ? 'table' : (urlFormat || 'mermaid'));
+            }
 
             document.getElementById('parse_json').addEventListener('click', () => {
                 parseInput("json");
@@ -118,15 +1017,639 @@
             });
 
             document.getElementById('parse_table').addEventListener('click', () => {
-                parseInput("table_format");
+                parseInput("table");
             });
 
-            function parseInput(format) {
+            document.getElementById('parse_csv').addEventListener('click', () => {
+                parseInput("csv");
+            });
+
+            document.getElementById('parse_mermaid').addEventListener('click', () => {
+                parseInput("mermaid");
+            });
+
+            document.getElementById('parse_xml').addEventListener('click', () => {
+                parseInput("xml");
+            });
+
+            document.getElementById('parse_hexview').addEventListener('click', () => {
+                parseInput("hexview");
+            });
+
+            document.getElementById('copy_output').addEventListener('click', () => {
+                writeClipboard(window._lastRawOutput || '');
+            });
+
+            document.getElementById('share_button').addEventListener('click', () => {
                 const inputString = document.getElementById('inputstring').value;
-                const formattedResult = m_bus_parse(inputString, format);
-                const outputElement = document.getElementById("output");
-                outputElement.textContent = formattedResult;
+                const params = new URLSearchParams({ data: inputString, format: currentFormat });
+                const shareUrl = `${location.origin}${location.pathname}?${params}`;
+                navigator.clipboard.writeText(shareUrl);
+                const btn = document.getElementById('share_button');
+                btn.title = 'Copied!';
+                setTimeout(() => { btn.title = 'Copy share link'; }, 2000);
+            });
+
+            document.getElementById('report_issue').addEventListener('click', () => {
+                window.open('https://github.com/maebli/m-bus-parser/issues/new', '_blank');
+            });
+
+            new ResizeObserver(() => {
+                if (currentFormat !== 'table') return;
+                const width = measureTableWidth();
+                if (width === lastTableWidth) return;
+                clearTimeout(tableResizeTimer);
+                tableResizeTimer = setTimeout(() => parseInput('table', false), 120);
+            }).observe(document.getElementById('output-container'));
+
+            async function parseInput(format, updateHistory = true) {
+                format = format === 'table_format' ? 'table' : format;
+                currentFormat = format;
+                const inputString = document.getElementById('inputstring').value;
+                const aesKey = document.getElementById('aeskey').value.trim();
+                const outputContainer = document.getElementById('output');
+
+                if (updateHistory) {
+                    const params = new URLSearchParams({ data: inputString, format });
+                    history.replaceState(null, '', `?${params}`);
+                }
+
+                if (aesKey && !/^[0-9A-Fa-f]{32}$/.test(aesKey)) {
+                    renderOutputError(outputContainer, {
+                        code: 'option.invalid',
+                        message: 'AES key must contain exactly 32 hexadecimal characters.',
+                    });
+                    return;
+                }
+
+                let language = 'plaintext';
+                let extension = 'txt';
+                let mimeType = 'text/plain';
+                if (format === 'json') {
+                    language = 'json'; extension = 'json'; mimeType = 'application/json';
+                } else if (format === 'yaml') {
+                    language = 'yaml'; extension = 'yaml'; mimeType = 'application/yaml';
+                } else if (format === 'csv') {
+                    language = 'csv'; extension = 'csv'; mimeType = 'text/csv';
+                } else if (format === 'mermaid') {
+                    extension = 'mmd';
+                } else if (format === 'xml') {
+                    language = 'xml'; extension = 'xml'; mimeType = 'application/xml';
+                } else if (format === 'hexview') {
+                    extension = 'json'; mimeType = 'application/json';
+                }
+
+                try {
+                    const width = format === 'table' ? measureTableWidth() : undefined;
+                    if (format === 'table') lastTableWidth = width;
+                    const formattedResult = m_bus_render(
+                        inputString,
+                        format,
+                        aesKey || undefined,
+                        width,
+                        true,
+                    );
+                    window._lastRawOutput = formattedResult;
+
+                    if (format === 'hexview') {
+                        outputContainer.replaceChildren();
+                        renderHexViewer(outputContainer, formattedResult, inputString);
+                    } else if (format === 'mermaid') {
+                        const mermaidDiv = document.createElement('div');
+                        mermaidDiv.id = 'mermaid_diagram';
+                        mermaidDiv.textContent = formattedResult;
+                        outputContainer.replaceChildren(mermaidDiv);
+                        await mermaid.run({ nodes: [mermaidDiv] });
+                    } else {
+                        await renderCodeViewer(
+                            outputContainer,
+                            formattedResult,
+                            language,
+                            `${format.toUpperCase()} parser output`,
+                        );
+                    }
+
+                    updateDownload(formattedResult, extension, mimeType);
+                } catch (error) {
+                    window._lastRawOutput = '';
+                    renderOutputError(outputContainer, error);
+                    updateDownload('', extension, mimeType);
+                }
             }
+        }
+
+        function measureTableWidth() {
+            const container = document.getElementById('output-container');
+            const canvas = measureTableWidth.canvas ||= document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            context.font = '13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+            const characterWidth = context.measureText('0').width || 8;
+            const availableWidth = Math.max(0, container.clientWidth - 84);
+            return Math.max(32, Math.min(120, Math.floor(availableWidth / characterWidth)));
+        }
+
+        function updateDownload(content, extension, mimeType) {
+            if (window._lastDownloadUrl) URL.revokeObjectURL(window._lastDownloadUrl);
+            const url = URL.createObjectURL(new Blob([content], { type: mimeType }));
+            const downloadLink = document.getElementById('download_output');
+            downloadLink.href = url;
+            downloadLink.download = `m-bus-output.${extension}`;
+            window._lastDownloadUrl = url;
+        }
+
+        function renderOutputError(container, error) {
+            const message = error instanceof Error ? error.message : String(error?.message || error);
+            const code = error?.code || 'render.failed';
+            const output = document.createElement('pre');
+            output.className = 'output-error';
+            output.setAttribute('role', 'alert');
+            output.textContent = `[${code}] ${message}`;
+            container.replaceChildren(output);
+        }
+
+        function renderHexViewer(container, annotatedJson, inputString) {
+            let segments;
+            let displayBytes = null;
+            let errorMessage = null;
+            try {
+                const parsed = JSON.parse(annotatedJson);
+                if (Array.isArray(parsed)) {
+                    segments = parsed;
+                } else if (parsed && typeof parsed === 'object') {
+                    segments = parsed.segments;
+                    if (typeof parsed.error === 'string') {
+                        errorMessage = parsed.error;
+                    }
+                    if (Array.isArray(parsed.bytes)) {
+                        displayBytes = parsed.bytes.map(b => Number(b) & 0xFF);
+                    }
+                } else {
+                    segments = parsed;
+                }
+            } catch (e) {
+                renderHexViewerError(container, `Error parsing annotation data: ${e.message}`);
+                return;
+            }
+            if (!Array.isArray(segments)) {
+                const message = errorMessage || 'No annotation segments returned. Check input.';
+                renderHexViewerError(container, message);
+                return;
+            }
+            if (segments.length === 0) {
+                renderHexViewerError(container, 'No annotation segments returned. Check input.');
+                return;
+            }
+
+            // Parse raw bytes from input string
+            let rawBytes;
+            if (displayBytes) {
+                rawBytes = displayBytes;
+            } else {
+                try {
+                    rawBytes = parseHexInputBytes(inputString);
+                } catch (e) {
+                    renderHexViewerError(container, e.message);
+                    return;
+                }
+            }
+            if (rawBytes.length === 0) {
+                renderHexViewerError(container, 'No input bytes found. Check input.');
+                return;
+            }
+
+            // Build byte-to-segment lookup
+            const byteToSeg = new Array(rawBytes.length).fill(null);
+            segments.forEach((seg, idx) => {
+                for (let i = seg.start; i < seg.end && i < rawBytes.length; i++) {
+                    byteToSeg[i] = idx;
+                }
+            });
+
+            // Layer CSS class
+            function layerClass(layer) {
+                if (layer === 'frame') return 'hex-layer-frame';
+                if (layer === 'app_header') return 'hex-layer-appheader';
+                return 'hex-layer-record';
+            }
+            function segmentKindClass(kind) {
+                if (kind === 'dif' || kind === 'dife') return 'hex-kind-dif';
+                if (kind === 'vif' || kind === 'vife' || kind === 'plaintext_vif') return 'hex-kind-vif';
+                if (kind === 'data_payload') return 'hex-kind-data';
+                return '';
+            }
+
+            // Create viewer structure
+            const viewer = document.createElement('div');
+            viewer.className = 'hex-viewer';
+
+            const leftPanel = document.createElement('div');
+            leftPanel.className = 'hex-viewer-left';
+
+            const rightPanel = document.createElement('div');
+            rightPanel.className = 'hex-viewer-right';
+
+            viewer.appendChild(leftPanel);
+            viewer.appendChild(rightPanel);
+            container.appendChild(viewer);
+
+            // Tooltip
+            const tooltip = document.createElement('div');
+            tooltip.className = 'hex-tooltip';
+            document.body.appendChild(tooltip);
+
+            // Render hex grid
+            const grid = document.createElement('div');
+            grid.className = 'hex-grid';
+            leftPanel.appendChild(grid);
+
+            const header = document.createElement('div');
+            header.className = 'hex-header';
+            const offsetHeader = document.createElement('span');
+            offsetHeader.className = 'hex-offset';
+            offsetHeader.textContent = 'Offset';
+            header.appendChild(offsetHeader);
+            for (let i = 0; i < 16; i++) {
+                const colHeader = document.createElement('span');
+                colHeader.className = 'hex-byte';
+                colHeader.textContent = i.toString(16).toUpperCase().padStart(2, '0');
+                header.appendChild(colHeader);
+                if (i === 7) {
+                    const gap = document.createElement('span');
+                    gap.className = 'hex-gap';
+                    header.appendChild(gap);
+                }
+            }
+            const sepHeader = document.createElement('span');
+            sepHeader.className = 'hex-ascii-sep';
+            header.appendChild(sepHeader);
+            const asciiHeader = document.createElement('span');
+            asciiHeader.className = 'hex-ascii-label';
+            asciiHeader.textContent = 'ASCII';
+            header.appendChild(asciiHeader);
+            grid.appendChild(header);
+
+            const byteElements = [];
+            const asciiElements = [];
+
+            for (let row = 0; row * 16 < rawBytes.length; row++) {
+                const rowDiv = document.createElement('div');
+                rowDiv.className = 'hex-row';
+
+                // Offset
+                const offsetSpan = document.createElement('span');
+                offsetSpan.className = 'hex-offset';
+                offsetSpan.textContent = (row * 16).toString(16).toUpperCase().padStart(4, '0');
+                rowDiv.appendChild(offsetSpan);
+
+                const rowAsciiSpans = [];
+
+                for (let col = 0; col < 16; col++) {
+                    const byteIdx = row * 16 + col;
+                    if (byteIdx >= rawBytes.length) {
+                        // Pad
+                        const pad = document.createElement('span');
+                        pad.className = 'hex-byte';
+                        rowDiv.appendChild(pad);
+                        if (col === 7) {
+                            const gap = document.createElement('span');
+                            gap.className = 'hex-gap';
+                            rowDiv.appendChild(gap);
+                        }
+                        continue;
+                    }
+
+                    const b = rawBytes[byteIdx];
+                    const segIdx = byteToSeg[byteIdx];
+                    const seg = segIdx !== null ? segments[segIdx] : null;
+
+                    const span = document.createElement('span');
+                    span.className = 'hex-byte ' + (seg ? [layerClass(seg.layer), segmentKindClass(seg.kind)].filter(Boolean).join(' ') : '');
+                    span.textContent = b.toString(16).toUpperCase().padStart(2, '0');
+                    span.dataset.byteIdx = byteIdx;
+                    if (segIdx !== null) span.dataset.segIdx = segIdx;
+                    byteElements[byteIdx] = span;
+                    rowDiv.appendChild(span);
+
+                    if (col === 7) {
+                        const gap = document.createElement('span');
+                        gap.className = 'hex-gap';
+                        rowDiv.appendChild(gap);
+                    }
+
+                    // ASCII
+                    const aSpan = document.createElement('span');
+                    const ch = (b >= 0x21 && b <= 0x7e) ? String.fromCharCode(b) : '\u00b7';
+                    aSpan.className = 'hex-ascii ' + (seg ? [layerClass(seg.layer), segmentKindClass(seg.kind)].filter(Boolean).join(' ') : '');
+                    aSpan.textContent = ch;
+                    aSpan.dataset.byteIdx = byteIdx;
+                    if (segIdx !== null) aSpan.dataset.segIdx = segIdx;
+                    asciiElements[byteIdx] = aSpan;
+                    rowAsciiSpans.push(aSpan);
+                }
+
+                // ASCII separator
+                const sep = document.createElement('span');
+                sep.className = 'hex-ascii-sep';
+                rowDiv.appendChild(sep);
+
+                rowAsciiSpans.forEach(s => rowDiv.appendChild(s));
+
+                grid.appendChild(rowDiv);
+            }
+
+            // Highlight helpers
+            let activeSegIdx = null;
+            function highlightSegment(segIdx) {
+                clearHighlight();
+                if (segIdx === null || segIdx === undefined) return;
+                activeSegIdx = segIdx;
+                const seg = segments[segIdx];
+                for (let i = seg.start; i < seg.end; i++) {
+                    if (byteElements[i]) byteElements[i].classList.add('highlight');
+                    if (asciiElements[i]) asciiElements[i].classList.add('highlight');
+                }
+                // Highlight tree item
+                const treeItem = rightPanel.querySelector(`[data-seg-idx="${segIdx}"]`);
+                if (treeItem) {
+                    treeItem.classList.add('active');
+                    treeItem.scrollIntoView({ block: 'nearest' });
+                    // Expand parent group if collapsed
+                    const groupBody = treeItem.closest('.hex-tree-group-body');
+                    if (groupBody && groupBody.classList.contains('hidden')) {
+                        groupBody.classList.remove('hidden');
+                        const groupHeader = groupBody.previousElementSibling;
+                        if (groupHeader) groupHeader.classList.remove('collapsed');
+                    }
+                }
+            }
+            function clearHighlight() {
+                activeSegIdx = null;
+                byteElements.forEach(el => { if (el) el.classList.remove('highlight'); });
+                asciiElements.forEach(el => { if (el) el.classList.remove('highlight'); });
+                rightPanel.querySelectorAll('.hex-tree-item.active').forEach(el => el.classList.remove('active'));
+            }
+
+            // Hex grid events
+            leftPanel.addEventListener('mouseover', e => {
+                const el = e.target.closest('[data-seg-idx]');
+                if (!el) return;
+                const segIdx = parseInt(el.dataset.segIdx);
+                const seg = segments[segIdx];
+                tooltip.textContent = segmentTooltip(seg);
+                tooltip.style.display = 'block';
+            });
+            leftPanel.addEventListener('mousemove', e => {
+                tooltip.style.left = (e.clientX + 12) + 'px';
+                tooltip.style.top = (e.clientY - 30) + 'px';
+            });
+            leftPanel.addEventListener('mouseout', e => {
+                const el = e.target.closest('[data-seg-idx]');
+                if (el) tooltip.style.display = 'none';
+            });
+            leftPanel.addEventListener('click', e => {
+                const el = e.target.closest('[data-seg-idx]');
+                if (!el) { clearHighlight(); return; }
+                const segIdx = parseInt(el.dataset.segIdx);
+                if (activeSegIdx === segIdx) { clearHighlight(); }
+                else { highlightSegment(segIdx); }
+            });
+
+            // Build tree panel
+            // Group segments by layer, then by record group
+            let currentLayer = null;
+            let currentGroup = null;
+            let groupBody = null;
+
+            segments.forEach((seg, segIdx) => {
+                if (seg.layer !== currentLayer) {
+                    currentLayer = seg.layer;
+                    currentGroup = null;
+                    const layerLabel = document.createElement('div');
+                    layerLabel.className = 'hex-tree-layer';
+                    const layerNames = { 'frame': 'Frame', 'app_header': 'Application Header', 'record_field': 'Data Records' };
+                    layerLabel.textContent = layerNames[seg.layer] || seg.layer;
+                    rightPanel.appendChild(layerLabel);
+                    groupBody = null;
+                }
+
+                // Record grouping
+                if (seg.layer === 'record_field' && seg.group !== null && seg.group !== currentGroup) {
+                    currentGroup = seg.group;
+                    const groupDiv = document.createElement('div');
+                    groupDiv.className = 'hex-tree-group';
+
+                    const groupHeader = document.createElement('div');
+                    groupHeader.className = 'hex-tree-group-header';
+                    groupHeader.innerHTML = '<span class="arrow">\u25BC</span> Record ' + seg.group;
+                    groupDiv.appendChild(groupHeader);
+
+                    groupBody = document.createElement('div');
+                    groupBody.className = 'hex-tree-group-body';
+                    groupDiv.appendChild(groupBody);
+
+                    groupHeader.addEventListener('click', () => {
+                        groupBody.classList.toggle('hidden');
+                        groupHeader.classList.toggle('collapsed');
+                    });
+
+                    rightPanel.appendChild(groupDiv);
+                }
+
+                const item = document.createElement('div');
+                item.className = ['hex-tree-item', segmentKindClass(seg.kind)].filter(Boolean).join(' ');
+                item.dataset.segIdx = segIdx;
+
+                const offsetStr = seg.end - seg.start === 1
+                    ? '[' + seg.start.toString(16).toUpperCase().padStart(2, '0') + ']'
+                    : '[' + seg.start.toString(16).toUpperCase().padStart(2, '0') + '..' + seg.end.toString(16).toUpperCase().padStart(2, '0') + ']';
+
+                const kindSpan = document.createElement('span');
+                kindSpan.className = 'tree-kind';
+                kindSpan.textContent = seg.kind;
+
+                const detailSpan = document.createElement('span');
+                detailSpan.className = 'tree-detail';
+                detailSpan.textContent = seg.detail;
+
+                const offsetSpan = document.createElement('span');
+                offsetSpan.className = 'tree-offset';
+                offsetSpan.textContent = offsetStr;
+
+                const copyButton = document.createElement('button');
+                copyButton.type = 'button';
+                copyButton.className = 'hex-tree-copy';
+                copyButton.title = 'Copy field hex';
+                copyButton.setAttribute('aria-label', 'Copy field hex');
+                copyButton.innerHTML = copyIconSvg();
+                copyButton.addEventListener('click', e => {
+                    e.stopPropagation();
+                    copySegmentBytes(seg, rawBytes, copyButton);
+                });
+
+                item.append(kindSpan, detailSpan, offsetSpan, copyButton);
+
+                item.addEventListener('click', () => {
+                    if (activeSegIdx === segIdx) { clearHighlight(); }
+                    else { highlightSegment(segIdx); }
+                });
+                item.addEventListener('mouseover', () => {
+                    if (activeSegIdx === null) {
+                        const s = segments[segIdx];
+                        for (let i = s.start; i < s.end; i++) {
+                            if (byteElements[i]) byteElements[i].classList.add('highlight');
+                            if (asciiElements[i]) asciiElements[i].classList.add('highlight');
+                        }
+                    }
+                });
+                item.addEventListener('mouseout', () => {
+                    if (activeSegIdx === null) {
+                        clearHighlight();
+                    }
+                });
+
+                if (groupBody && seg.group !== null) {
+                    groupBody.appendChild(item);
+                } else {
+                    rightPanel.appendChild(item);
+                }
+            });
+
+            // Cleanup tooltip on viewer removal
+            const observer = new MutationObserver(() => {
+                if (!document.body.contains(viewer)) {
+                    tooltip.remove();
+                    observer.disconnect();
+                }
+            });
+            observer.observe(container, { childList: true });
+        }
+
+        function parseHexInputBytes(inputString) {
+            const cleaned = String(inputString || '')
+                .trim()
+                .replace(/0x/gi, '')
+                .replace(/[^0-9a-fA-F]/g, '');
+            if (cleaned.length === 0) return [];
+            if (cleaned.length % 2 !== 0) {
+                throw new Error('Hex input has an odd number of digits.');
+            }
+
+            const bytes = [];
+            for (let i = 0; i < cleaned.length; i += 2) {
+                bytes.push(parseInt(cleaned.slice(i, i + 2), 16));
+            }
+            return bytes;
+        }
+
+        function copySegmentBytes(seg, rawBytes, button) {
+            const hex = rawBytes
+                .slice(seg.start, seg.end)
+                .map(b => b.toString(16).toUpperCase().padStart(2, '0'))
+                .join(' ');
+
+            writeClipboard(hex).then(() => {
+                button.classList.add('copied');
+                button.title = 'Copied';
+                setTimeout(() => {
+                    button.classList.remove('copied');
+                    button.title = 'Copy field hex';
+                }, 1000);
+            }).catch(() => {
+                button.title = 'Copy failed';
+                setTimeout(() => {
+                    button.title = 'Copy field hex';
+                }, 1000);
+            });
+        }
+
+        function writeClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                return navigator.clipboard.writeText(text);
+            }
+
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.setAttribute('readonly', '');
+            textarea.style.position = 'fixed';
+            textarea.style.left = '-9999px';
+            document.body.appendChild(textarea);
+            textarea.select();
+            const copied = document.execCommand('copy');
+            textarea.remove();
+            return copied
+                ? Promise.resolve()
+                : Promise.reject(new Error('Copy failed'));
+        }
+
+        function copyIconSvg() {
+            return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+        }
+
+        function renderHexViewerError(container, message) {
+            const error = document.createElement('pre');
+            error.className = 'output-error';
+            error.setAttribute('role', 'alert');
+            error.textContent = String(message);
+            container.replaceChildren(error);
+        }
+
+        function segmentTooltip(seg) {
+            const kind = segmentKindLabel(seg.kind);
+            const detail = String(seg.detail || '');
+            if (!detail) return kind;
+
+            const colon = detail.indexOf(':');
+            if (colon !== -1) {
+                const detailPrefix = detail.slice(0, colon);
+                if (sameSegmentLabel(detailPrefix, kind) || sameSegmentLabel(detailPrefix, seg.kind)) {
+                    return detail;
+                }
+            }
+
+            return kind + ': ' + detail;
+        }
+
+        function sameSegmentLabel(a, b) {
+            return normalizeSegmentLabel(a) === normalizeSegmentLabel(b);
+        }
+
+        function normalizeSegmentLabel(value) {
+            return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        }
+
+        function segmentKindLabel(kind) {
+            const labels = {
+                StartByte: 'Start Byte',
+                Length: 'Length',
+                CField: 'C Field',
+                AField: 'A Field',
+                Checksum: 'Checksum',
+                StopByte: 'Stop Byte',
+                CiField: 'CI Field',
+                IdentificationNumber: 'Identification Number',
+                ManufacturerCode: 'Manufacturer Code',
+                Version: 'Version',
+                DeviceType: 'Device Type',
+                AccessNumber: 'Access Number',
+                Status: 'Status',
+                ConfigurationField: 'Configuration Field',
+                EncryptionConfigByte: 'Encryption Config Byte',
+                Dif: 'DIF',
+                Dife: 'DIFE',
+                Vif: 'VIF',
+                Vife: 'VIFE',
+                PlaintextVif: 'Plaintext VIF',
+                DataPayload: 'Data',
+                LField: 'L Field',
+                WirelessManufacturerId: 'Manufacturer ID',
+                Crc: 'CRC',
+                ExtendedLinkLayer: 'Extended Link Layer',
+                EncryptedPayload: 'Encrypted Payload',
+                ManufacturerSpecific: 'Manufacturer Specific',
+                IdleFiller: 'Idle Filler',
+                Unknown: 'Unknown',
+            };
+            return labels[kind] || String(kind || '').replace(/([a-z])([A-Z])/g, '$1 $2');
         }
 
         setup(); // Set up the event listeners after the page is loaded

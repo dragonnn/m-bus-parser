@@ -1,6 +1,6 @@
 [package]
 name = "m-bus-parser-cli"
-version = "0.0.10"
+version = "0.5.1"
 edition = "2021"
 description = "A cli to use the library for parsing M-Bus frames"
 license = "MIT"
@@ -10,13 +10,19 @@ readme = "README.md"
 authors = ["Michael Aebli"]
 keywords = ["m-bus", "parser", "parse", "cli"]
 
+[package.metadata.release]
+tag-name = "cli-v{{version}}"
+
 [dev-dependencies]
 
 [build-dependencies]
 
 [features]
-
+default = ["decryption"]
+decryption = ["m-bus-parser/decryption"]
 
 [dependencies]
-m-bus-parser = { path = "..", version = "0.0.15", features = ["std", "serde"] }
+m-bus-parser = { path = "..", version = "0.5.1", features = ["std", "serde"] }
+hex = "0.4"
 clap = { version = "4.5.4", features = ["derive"] }
+terminal_size = "0.4"
