@@ -276,13 +276,14 @@ impl From<&ValueInformationField> for ValueInformationCoding {
         match value_information.data {
             0x00..=0x7B | 0x80..=0xFA => Self::Primary,
             0x7C | 0xFC => Self::PlainText,
-            0xFD => Self::MainVIFExtension,
+            // Without the extension bit, no VIFE follows and the decoded
+            // value information is empty, as for the alternate code 0x7B.
+            0x7D | 0xFD => Self::MainVIFExtension,
             0xFB => Self::AlternateVIFExtension,
             0x7E => Self::ManufacturerSpecific,
             0xFE => Self::ManufacturerSpecific,
             0x7F => Self::ManufacturerSpecific,
             0xFF => Self::ManufacturerSpecific,
-            _ => unreachable!("Invalid value information: {:X}", value_information.data),
         }
     }
 }
@@ -321,7 +322,7 @@ impl<'a> ValueInformationBlock<'a> {
     pub fn get_size(&self) -> usize {
         let mut size = 1;
         if let Some(vife) = &self.value_information_extension {
-            size += vife.iter().count();
+            size += vife.0.len();
         }
         if let Some(plaintext_vife) = &self.plaintext_vife {
             // 1 byte for the length of the ASCII string
@@ -455,8 +456,20 @@ fn head_vif_info(
             0x6C => labels!(ValueLabel::Date),
             0x6D => labels!(ValueLabel::DateTime),
             0x6E => labels!(ValueLabel::DimensionlessHCA),
-            0x70..=0x73 => labels!(ValueLabel::AveragingDuration),
-            0x74..=0x77 => labels!(ValueLabel::ActualityDuration),
+            0x70..=0x77 => VifInfo {
+                labels: if vif.data & 0x04 == 0 {
+                    &[ValueLabel::AveragingDuration]
+                } else {
+                    &[ValueLabel::ActualityDuration]
+                },
+                units: match vif.data & 3 {
+                    0 => &[unit!(Second)],
+                    1 => &[unit!(Minute)],
+                    2 => &[unit!(Hour)],
+                    _ => &[unit!(Day)],
+                },
+                ..VifInfo::EMPTY
+            },
             0x78 => labels!(ValueLabel::FabricationNumber),
             0x79 => labels!(ValueLabel::EnhancedIdentification),
             0x7A => labels!(ValueLabel::Address),
@@ -752,8 +765,8 @@ fn head_vif_info(
                 return Ok(VifInfo::EMPTY);
             };
             match first_vife_data & 0x7F {
-                0b0 => populate!(Watt / h, 3, dec: 5, Energy),
-                0b000_0001 => populate!(Watt / h, 3, dec: 6, Energy),
+                0b0 => populate!(Watt * h, 1, dec: 5, Energy),
+                0b000_0001 => populate!(Watt * h, 1, dec: 6, Energy),
                 0b000_0010 => populate!(ReactiveWatt * h, 1, dec: 3, ReactiveEnergy),
                 0b000_0011 => populate!(ReactiveWatt * h, 1, dec: 4, ReactiveEnergy),
                 0b000_0100 => populate!(ApparentWatt * h, 1, dec: 3, ApparentEnergy),
@@ -1180,6 +1193,60 @@ impl Iterator for OrthogonalVifes<'_> {
     }
 }
 
+/// Substitutes the metric units of a VIF followed by VIFE 0x3D, per
+/// EN 13757-3 Annex C Table C.1. Returns the non-metric units and the change
+/// to the decimal exponent; kBTU and mBTU/s are expressed as BTU and BTU/s.
+///
+/// Kept out of line and run after the scale fold, so the scale fold keeps its
+/// two-word accumulator and the scan's frame is not live at the same time.
+#[inline(never)]
+fn non_metric_units(
+    coding: ValueInformationCoding,
+    vif: u8,
+    first_vife: Option<u8>,
+    orthogonal: &ValueInformationFieldExtensions<'_>,
+) -> Option<(&'static [Unit], isize)> {
+    let units: Option<(&'static [Unit], isize)> = match coding {
+        ValueInformationCoding::Primary => match vif & 0x7F {
+            // 10^(nnn-3) Wh -> 10^(nnn-3) kBTU
+            0x00..=0x07 => Some((&[unit!(BritishThermalUnit)], 3)),
+            // 10^(nnn-6) m³ -> 10^(nnn-3) USgal
+            0x10..=0x17 => Some((&[unit!(AmericanGallon)], 3)),
+            // 10^(nnn-3) W -> 10^(nnn-3) mBTU/s
+            0x28..=0x2F => Some((&[unit!(BritishThermalUnit), unit!(Second ^ -1)], -3)),
+            // 10^(nnn-7) m³/min -> 10^(nnn-4) USgal/min
+            0x40..=0x47 => Some((&[unit!(AmericanGallon), unit!(Minute ^ -1)], 3)),
+            // Flow, return, difference and external temperature: °C/K -> °F
+            0x58..=0x67 => Some((&[unit!(Fahrenheit)], 0)),
+            _ => None,
+        },
+        // Cold/warm temperature limit: °C -> °F
+        ValueInformationCoding::AlternateVIFExtension => match first_vife? & 0x7F {
+            0x74..=0x77 => Some((&[unit!(Fahrenheit)], 0)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let units = units?;
+    // Same walk as OrthogonalVifes::next, but on raw bytes: decoding each VIFE
+    // into a VifInfo would add an iterator frame below this one.
+    let mut combinable_ext = false;
+    for &byte in orthogonal.0 {
+        if byte == 0xFC {
+            combinable_ext = true;
+            continue;
+        }
+        if !core::mem::replace(&mut combinable_ext, false) {
+            match byte & 0x7F {
+                0x3D => return Some(units),
+                0x7F => return None,
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
 /// A borrowed, allocation-free view of decoded VIF and VIFE information.
 ///
 /// Labels and units are produced in wire order, including duplicates. The view
@@ -1250,14 +1317,32 @@ impl<'a> TryFrom<&ValueInformationBlock<'a>> for ValueInformation<'a> {
             vife: orthogonal_chain(coding, ext),
             combinable_ext: false,
         };
+        if orthogonal.vife.0.is_empty() {
+            return Ok(Self {
+                head_labels: head.labels,
+                head_units: head.units,
+                orthogonal: orthogonal.vife,
+                decimal_scale_exponent: head.scale,
+                decimal_offset_exponent: head.offset,
+            });
+        }
         let (scale, offset) = orthogonal
             .clone()
             .fold((head.scale, head.offset), |(s, o), v| {
                 (s + v.scale, o + v.offset)
             });
+        let (head_units, scale) = match non_metric_units(
+            coding,
+            block.value_information.data,
+            first,
+            &orthogonal.vife,
+        ) {
+            Some((units, delta)) => (units, scale + delta),
+            None => (head.units, scale),
+        };
         Ok(Self {
             head_labels: head.labels,
-            head_units: head.units,
+            head_units,
             orthogonal: orthogonal.vife,
             decimal_scale_exponent: scale,
             decimal_offset_exponent: offset,
@@ -1714,6 +1799,7 @@ pub enum UnitName {
     Fahrenheit,
     AmericanGallon,
     Calorie,
+    BritishThermalUnit,
 }
 
 #[cfg(feature = "std")]
@@ -1760,6 +1846,7 @@ impl fmt::Display for UnitName {
             UnitName::HCAUnit => write!(f, "HCAUnit"),
             UnitName::Fahrenheit => write!(f, "°F"),
             UnitName::AmericanGallon => write!(f, "UsGal"),
+            UnitName::BritishThermalUnit => write!(f, "BTU"),
             UnitName::Calorie => write!(f, "cal"),
         }
     }
@@ -1767,6 +1854,9 @@ impl fmt::Display for UnitName {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    use std::{vec, vec::Vec};
+
     fn assert_information(
         actual: super::ValueInformation<'_>,
         offset: isize,
@@ -1800,6 +1890,54 @@ mod tests {
         );
         assert_eq!(block.value_information_extension.as_ref().unwrap().len(), 2);
         assert_eq!(ValueInformation::try_from(&block).unwrap(), info);
+    }
+
+    #[test]
+    fn duration_vifs_include_their_time_unit() {
+        use super::*;
+        for (base, label) in [
+            (0x70, ValueLabel::AveragingDuration),
+            (0x74, ValueLabel::ActualityDuration),
+        ] {
+            for (offset, name) in [
+                UnitName::Second,
+                UnitName::Minute,
+                UnitName::Hour,
+                UnitName::Day,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let bytes = [base + offset as u8];
+                let block = ValueInformationBlock::try_from(bytes.as_slice()).unwrap();
+                let info = ValueInformation::try_from(&block).unwrap();
+                assert!(info.labels().eq([label]));
+                assert!(info.units().eq([Unit { name, exponent: 1 }]));
+                assert_eq!(info.decimal_scale_exponent, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn extended_energy_vifs_use_watt_hours() {
+        use super::*;
+        for (vife, scale) in [(0x00, 5), (0x01, 6)] {
+            let bytes = [0xfb, vife];
+            let block = ValueInformationBlock::try_from(bytes.as_slice()).unwrap();
+            let info = ValueInformation::try_from(&block).unwrap();
+            assert!(info.labels().eq([ValueLabel::Energy]));
+            assert!(info.units().eq([
+                Unit {
+                    name: UnitName::Watt,
+                    exponent: 1
+                },
+                Unit {
+                    name: UnitName::Hour,
+                    exponent: 1
+                },
+            ]));
+            assert_eq!(info.decimal_scale_exponent, scale);
+        }
     }
 
     #[test]
@@ -2160,6 +2298,73 @@ mod tests {
         assert!(vi.has_label(ValueLabel::MoistureLevel));
         assert_eq!(vi.first_unit().unwrap().name, UnitName::Percent);
         assert_eq!(vi.decimal_scale_exponent, 0);
+    }
+
+    #[test]
+    fn test_non_metric_vife_substitutes_units() {
+        use crate::value_information::{
+            UnitName, ValueInformation, ValueInformationBlock, ValueLabel,
+        };
+
+        let decode = |bytes: &[u8]| {
+            let vi = ValueInformation::try_from(&ValueInformationBlock::try_from(bytes).unwrap())
+                .unwrap();
+            assert!(vi.has_label(ValueLabel::NonMetricUnits));
+            let units: Vec<_> = vi.units().map(|u| (u.name, u.exponent)).collect();
+            (units, vi.decimal_scale_exponent)
+        };
+
+        // EN 13757-3 Annex C Table C.1, VIFE 0x3D after each metric VIF.
+        // Issue #62: VIF 0x93 is 10^-3 m³ = 1 l, which maps to 1 USgal.
+        assert_eq!(
+            decode(&[0x93, 0x3D]),
+            (vec![(UnitName::AmericanGallon, 1)], 0)
+        );
+        // 10^-3 Wh -> 10^-3 kBTU = 1 BTU
+        assert_eq!(
+            decode(&[0x80, 0x3D]),
+            (vec![(UnitName::BritishThermalUnit, 1)], 0)
+        );
+        // 10^-3 W -> 10^-3 mBTU/s = 10^-6 BTU/s
+        assert_eq!(
+            decode(&[0xA8, 0x3D]),
+            (
+                vec![(UnitName::BritishThermalUnit, 1), (UnitName::Second, -1)],
+                -6
+            )
+        );
+        // 10^-7 m³/min -> 10^-4 USgal/min
+        assert_eq!(
+            decode(&[0xC0, 0x3D]),
+            (
+                vec![(UnitName::AmericanGallon, 1), (UnitName::Minute, -1)],
+                -4
+            )
+        );
+        // Flow, return, difference and external temperature: 10^-3 °F
+        for vif in [0xD8, 0xDC, 0xE0, 0xE4] {
+            assert_eq!(decode(&[vif, 0x3D]), (vec![(UnitName::Fahrenheit, 1)], -3));
+        }
+        // Cold/warm temperature limit via 0xFB 0x74: 10^-3 °F
+        assert_eq!(
+            decode(&[0xFB, 0xF4, 0x3D]),
+            (vec![(UnitName::Fahrenheit, 1)], -3)
+        );
+
+        // Without the VIFE, after the combinable extension prefix 0xFC, or after
+        // the manufacturer escape 0xFF, 0x3D is not the non-metric VIFE and the
+        // unit stays metric.
+        for bytes in [&[0x13][..], &[0x93, 0xFC, 0x3D], &[0x93, 0xFF, 0x3D]] {
+            let vi = ValueInformation::try_from(&ValueInformationBlock::try_from(bytes).unwrap())
+                .unwrap();
+            assert!(!vi.has_label(ValueLabel::NonMetricUnits), "{bytes:02X?}");
+            assert_eq!(
+                vi.first_unit().unwrap().name,
+                UnitName::Meter,
+                "{bytes:02X?}"
+            );
+            assert_eq!(vi.decimal_scale_exponent, -3, "{bytes:02X?}");
+        }
     }
 
     #[test]

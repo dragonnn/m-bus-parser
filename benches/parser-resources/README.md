@@ -20,9 +20,8 @@ uses the larger nested path rather than adding both:
 ```text
 parse_full_wired_frame + max(
   MbusData::try_from -> frame/application setup,
-  DataRecords::next -> DataRecord::try_from -> DataRecord::parse ->
-    DataRecordHeader::try_from -> ProcessedDataRecordHeader::try_from ->
-    ValueInformation::try_from + max(
+  DataRecords::next -> DataRecord::parse ->
+    ProcessedDataRecordHeader::try_from -> ValueInformation::try_from + max(
       head_vif_info,
       OrthogonalVifes::fold -> OrthogonalVifes::next -> orthogonal_vife_info
     )
@@ -79,3 +78,11 @@ compared within the same machine/run; CI tracks its own history.
 The comparison JSON uses the same benchmark history format as `measure.py`.
 Chart grouping, incomplete histories, tooltips, and commit links can be checked
 with `node --test .github/scripts/test-bench-charts.cjs` from the repository root.
+
+## Corpus and libmbus measurements
+
+The same CI workflow publishes a [Rust/libmbus comparison](../README.md) with
+three rows: average decode time across all 73 wired vectors, peak observed
+Cortex-M4 stack, and linked Cortex-M4 flash. It writes six values to
+`corpus-benchmarks.json` and methodology to `corpus-benchmarks-details.json`.
+The website shows one comparison table and folds earlier benchmark charts away.

@@ -1,6 +1,8 @@
 use super::{
-    data_information::{Data, DataFieldCoding, DataInformation, DataInformationBlock, DataType},
-    value_information::{ValueInformation, ValueInformationBlock, ValueLabel},
+    data_information::{
+        Data, DataFieldCoding, DataInformation, DataInformationBlock, DataType, SpecialFunctions,
+    },
+    value_information::{ValueInformation, ValueInformationBlock},
     variable_user_data::DataRecordError,
     LongTplHeader,
 };
@@ -73,13 +75,7 @@ impl<'a> DataRecord<'a> {
     pub fn data_record_header_hex(&self) -> String {
         let start = 0;
         let end = self.data_record_header.get_size();
-        self.raw_bytes
-            .get(start..end)
-            .unwrap_or(&[])
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(" ")
+        m_bus_core::hex::encode_upper(self.raw_bytes.get(start..end).unwrap_or(&[]), true)
     }
 
     #[cfg(feature = "std")]
@@ -87,59 +83,95 @@ impl<'a> DataRecord<'a> {
     pub fn data_hex(&self) -> String {
         let start = self.data_record_header.get_size();
         let end = self.get_size();
-        self.raw_bytes
-            .get(start..end)
-            .unwrap_or(&[])
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<Vec<_>>()
-            .join(" ")
+        m_bus_core::hex::encode_upper(self.raw_bytes.get(start..end).unwrap_or(&[]), true)
     }
 }
 
 impl<'a> DataRecord<'a> {
-    fn parse(
+    /// Parses the record at the start of `data` and sets `consumed` to how far
+    /// a record stream must advance: the record's length or, after an error,
+    /// its declared length if the header is readable, otherwise all of `data`.
+    /// Reporting this here lets callers return the record without reading it
+    /// again, so it can be built directly in their result.
+    pub(crate) fn parse(
         data: &'a [u8],
         fixed_data_header: Option<&'a LongTplHeader>,
+        consumed: &mut usize,
     ) -> Result<Self, DataRecordError> {
-        let data_record_header = DataRecordHeader::try_from(data)?;
-        let header_size = data_record_header.get_size();
-        if data.len() < header_size {
-            return Err(DataRecordError::InsufficientData);
-        }
-        let offset = header_size;
-        let data_out = if let Some(data_info) = &data_record_header
-            .processed_data_record_header
+        *consumed = data.len();
+        // This runs for every record, so keep large values out of extra stack
+        // slots: both headers are borrowed from their results instead of moved
+        // out with `?`, and the record is assembled only once everything parsed.
+        let raw = RawDataRecordHeader::try_from(data);
+        let raw_data_record_header = match &raw {
+            Ok(header) => header,
+            Err(error) => return Err(*error),
+        };
+        let processed = ProcessedDataRecordHeader::try_from(raw_data_record_header);
+        let processed_data_record_header = match &processed {
+            Ok(header) => header,
+            Err(error) => return Err(*error),
+        };
+        let header_size = raw_data_record_header.get_size();
+        let rest = data
+            .get(header_size..)
+            .ok_or(DataRecordError::InsufficientData)?;
+        // Without a DIB coding the rest of the record is manufacturer specific;
+        // decoding it through the same call avoids merging two `Data` values.
+        let data_field_coding = processed_data_record_header
             .data_information
-        {
-            data_info.data_field_coding.parse(
-                data.get(offset..)
-                    .ok_or(DataRecordError::InsufficientData)?,
-                fixed_data_header,
-            )?
-        } else {
-            Data {
-                value: Some(DataType::ManufacturerSpecific(
-                    data.get(offset..)
-                        .ok_or(DataRecordError::InsufficientData)?,
-                )),
-                size: data.len() - offset,
+            .as_ref()
+            .map_or(
+                DataFieldCoding::SpecialFunctions(SpecialFunctions::ManufacturerSpecific),
+                |data_info| data_info.data_field_coding,
+            );
+        let data_out = match data_field_coding.parse(rest, fixed_data_header) {
+            Ok(data_out) => data_out,
+            Err(error) => {
+                // A record whose contents fail to decode must not cost us the
+                // records behind it: step over it by its declared length.
+                if let Some(size) = data_field_coding
+                    .data_size(rest)
+                    .and_then(|size| size.checked_add(header_size))
+                    .filter(|&size| size != 0 && size <= data.len())
+                {
+                    *consumed = size;
+                }
+                return Err(error);
             }
         };
-
-        let mut record_size = data_record_header.get_size() + data_out.get_size();
-        if record_size > data.len() {
-            record_size = data.len();
-        }
+        // A data field longer than the input is truncated to the input.
         let raw_bytes = data
-            .get(..record_size)
-            .ok_or(DataRecordError::InsufficientData)?;
+            .get(..header_size + data_out.get_size())
+            .unwrap_or(data);
+        *consumed = raw_bytes.len();
 
-        Ok(DataRecord {
-            data_record_header,
-            data: data_out,
+        Ok(Self::assemble(
+            raw_data_record_header,
+            processed_data_record_header,
+            data_out,
             raw_bytes,
-        })
+        ))
+    }
+
+    // Out of line: cloning the optional header fields needs temporaries that
+    // should not widen the frame of `parse`, which is live during the deepest
+    // calls of a decode.
+    #[inline(never)]
+    fn assemble(
+        raw_data_record_header: &RawDataRecordHeader<'a>,
+        processed_data_record_header: &ProcessedDataRecordHeader<'a>,
+        data: Data<'a>,
+        raw_bytes: &'a [u8],
+    ) -> Self {
+        DataRecord {
+            data_record_header: DataRecordHeader {
+                raw_data_record_header: raw_data_record_header.clone(),
+                processed_data_record_header: processed_data_record_header.clone(),
+            },
+            data,
+            raw_bytes,
+        }
     }
 }
 
@@ -154,11 +186,14 @@ pub struct DataRecordHeader<'a> {
 impl DataRecordHeader<'_> {
     #[must_use]
     pub fn get_size(&self) -> usize {
-        let s = self
-            .raw_data_record_header
-            .data_information_block
-            .get_size();
-        if let Some(x) = &self.raw_data_record_header.value_information_block {
+        self.raw_data_record_header.get_size()
+    }
+}
+
+impl RawDataRecordHeader<'_> {
+    pub(crate) fn get_size(&self) -> usize {
+        let s = self.data_information_block.get_size();
+        if let Some(x) = &self.value_information_block {
             s + x.get_size()
         } else {
             s
@@ -168,6 +203,9 @@ impl DataRecordHeader<'_> {
 
 impl<'a> TryFrom<&'a [u8]> for RawDataRecordHeader<'a> {
     type Error = DataRecordError;
+    // Out of line: the temporaries of the block parsers are dead before the
+    // deepest calls of a decode, so they should not widen the caller's frame.
+    #[inline(never)]
     fn try_from(data: &[u8]) -> Result<RawDataRecordHeader<'_>, DataRecordError> {
         let difb = DataInformationBlock::try_from(data)?;
         let offset = difb.get_size();
@@ -191,61 +229,56 @@ impl<'a> TryFrom<&'a [u8]> for RawDataRecordHeader<'a> {
 impl<'a> TryFrom<&RawDataRecordHeader<'a>> for ProcessedDataRecordHeader<'a> {
     type Error = DataRecordError;
     fn try_from(raw_data_record_header: &RawDataRecordHeader<'a>) -> Result<Self, DataRecordError> {
-        let mut value_information = None;
-        let mut data_information = None;
-
-        if let Some(x) = &raw_data_record_header.value_information_block {
-            let v = ValueInformation::try_from(x)?;
-
-            let mut d = DataInformation::try_from(&raw_data_record_header.data_information_block)?;
-
-            // unfortunately, the data field coding is not always set in the data information block
-            // so we must do some additional checks to determine the correct data field coding
-
-            // Decode the lazy labels once, retaining the existing precedence
-            // when more than one date/time label is present.
-            let date_time_labels = v.labels().fold(0u8, |flags, label| {
-                flags
-                    | match label {
-                        ValueLabel::Date => 1,
-                        ValueLabel::DateTime => 2,
-                        ValueLabel::Time => 4,
-                        ValueLabel::DateTimeWithSeconds => 8,
-                        _ => 0,
-                    }
-            });
-            if date_time_labels & 1 != 0 {
-                d.data_field_coding = DataFieldCoding::DateTypeG;
-            } else if date_time_labels & 2 != 0 {
-                // VIF 0x6D with a 6-byte data field is a type I date and time
-                // (EN 13757-3), only the 4-byte variant is type F.
-                d.data_field_coding = if d.data_field_coding == DataFieldCoding::Integer48Bit {
-                    DataFieldCoding::DateTimeTypeI
-                } else {
-                    DataFieldCoding::DateTimeTypeF
-                };
-            } else if date_time_labels & 4 != 0 {
-                d.data_field_coding = DataFieldCoding::DateTimeTypeJ;
-            } else if date_time_labels & 8 != 0 {
-                d.data_field_coding = DataFieldCoding::DateTimeTypeI;
+        let value_information = match &raw_data_record_header.value_information_block {
+            Some(x) => Some(ValueInformation::try_from(x)?),
+            None if raw_data_record_header
+                .data_information_block
+                .data_information_field
+                .is_special_function() =>
+            {
+                None
             }
+            None => {
+                return Ok(Self {
+                    data_information: None,
+                    value_information: None,
+                })
+            }
+        };
 
-            value_information = Some(v);
-            data_information = Some(d);
-        } else if raw_data_record_header
-            .data_information_block
-            .data_information_field
-            .is_special_function()
-        {
-            data_information = Some(DataInformation::try_from(
-                &raw_data_record_header.data_information_block,
-            )?);
-        }
+        // Decode at one call site and adjust the coding in place so the
+        // processed header does not need a second DataInformation value.
+        let mut data_information =
+            DataInformation::try_from(&raw_data_record_header.data_information_block);
+        let d = match &mut data_information {
+            Ok(d) => d,
+            Err(error) => return Err((*error).into()),
+        };
+        // The DIF alone does not always identify the data field coding.
+        d.data_field_coding = raw_data_record_header
+            .value_information_block
+            .as_ref()
+            .map_or(d.data_field_coding, |vib| {
+                date_time_coding(vib.value_information.data, d.data_field_coding)
+            });
 
         Ok(Self {
-            data_information,
+            data_information: data_information.ok(),
             value_information,
         })
+    }
+}
+
+/// The current VIF tables produce Date and DateTime only from primary VIFs
+/// 6Ch and 6Dh. Their orthogonal VIFEs cannot change the data-field coding, so
+/// there is no need to decode the lazy label iterator for every record.
+fn date_time_coding(vif: u8, coding: DataFieldCoding) -> DataFieldCoding {
+    match vif & 0x7F {
+        0x6C => DataFieldCoding::DateTypeG,
+        // VIF 6Dh with six data bytes is type I; four bytes is type F.
+        0x6D if coding == DataFieldCoding::Integer48Bit => DataFieldCoding::DateTimeTypeI,
+        0x6D => DataFieldCoding::DateTimeTypeF,
+        _ => coding,
     }
 }
 
@@ -267,20 +300,51 @@ impl<'a> TryFrom<(&'a [u8], &'a LongTplHeader)> for DataRecord<'a> {
     fn try_from(
         (data, fixed_data_header): (&'a [u8], &'a LongTplHeader),
     ) -> Result<Self, Self::Error> {
-        Self::parse(data, Some(fixed_data_header))
+        Self::parse(data, Some(fixed_data_header), &mut 0)
     }
 }
 
 impl<'a> TryFrom<&'a [u8]> for DataRecord<'a> {
     type Error = DataRecordError;
     fn try_from(data: &'a [u8]) -> Result<Self, Self::Error> {
-        Self::parse(data, None)
+        Self::parse(data, None, &mut 0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value_information::ValueLabel;
+
+    #[test]
+    fn vif_7d_without_extension_preserves_value_and_record_boundary() {
+        for value in [0x00, 0x13, 0x7F] {
+            let bytes = [0x01, 0x7D, value, 0x00];
+            let record = DataRecord::try_from(bytes.as_slice()).unwrap();
+
+            assert_eq!(record.value(), Some(&DataType::Number(f64::from(value))));
+            assert_eq!(record.raw_bytes(), &bytes[..3]);
+            let information = record.value_information().unwrap();
+            assert_eq!(information.labels().count(), 0);
+            assert_eq!(information.units().count(), 0);
+            assert_eq!(information.decimal_scale_exponent, 0);
+            assert_eq!(information.decimal_offset_exponent, 0);
+        }
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn record_hex_preserves_header_data_boundary_and_empty_payload() {
+        let bytes = [0x03, 0x13, 0x15, 0x31, 0x00];
+        let record = DataRecord::try_from(bytes.as_slice()).unwrap();
+        assert_eq!(record.data_record_header_hex(), "03 13");
+        assert_eq!(record.data_hex(), "15 31 00");
+
+        let bytes = [0x00, 0x13];
+        let record = DataRecord::try_from(bytes.as_slice()).unwrap();
+        assert_eq!(record.data_record_header_hex(), "00 13");
+        assert_eq!(record.data_hex(), "");
+    }
 
     #[test]
     fn date_time_overrides_match_all_single_extension_vifs() {
@@ -288,11 +352,6 @@ mod tests {
         // precedence for all VIF/VIFE bytes and the relevant DIF widths.
         for dif in [0x02, 0x04, 0x06, 0x09] {
             for vif in 0..=u8::MAX {
-                // 0x7D is reserved and the existing VIF decoder rejects it
-                // with an unreachable!(), rather than a parse error.
-                if vif == 0x7d {
-                    continue;
-                }
                 for vife in 0..=0x7f {
                     let bytes = [dif, vif, vife];
                     let Ok(raw) = RawDataRecordHeader::try_from(bytes.as_slice()) else {

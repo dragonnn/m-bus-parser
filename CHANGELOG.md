@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-23
+
+### Changed
+
+- Decoding data records needs less stack and time. On a Cortex-M4, peak stack
+  across the 73 wired frames drops from 1976 to 944 bytes (libmbus: 1176),
+  while native decoding drops from about 739 to 469 ns/frame (libmbus: 2035).
+  Records are built in place, processed data information is updated in place,
+  common VIFs skip the orthogonal scan, and date/time coding uses the VIF
+  directly. A record whose data field fails to decode no longer has its header
+  parsed a second time.
+
+### Fixed
+
+- Records with the non-metric VIFE `0x3D` now use the units from EN 13757-3
+  Annex C instead of the metric ones: energy and power in BTU, volume and
+  volume flow in US gallons, and temperatures in °F. Before, the unit stayed
+  metric and only a "non metric units" label was added, so the frame from #62
+  read `99999.985 m³` instead of `99999985 [gal_us]`.
+
 ## [0.5.1] - 2026-09-20
 
 ### Fixed

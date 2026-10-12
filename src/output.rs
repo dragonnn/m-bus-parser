@@ -20,6 +20,9 @@ use crate::user_data::data_information::{
 };
 use crate::user_data::value_information::{Unit, UnitName, ValueLabel};
 
+mod application;
+pub use application::render_application_hex;
+
 const SCHEMA_VERSION: u8 = 3;
 const DEFAULT_TABLE_WIDTH: usize = 100;
 const MINIMUM_TABLE_WIDTH: usize = 32;
@@ -522,27 +525,35 @@ pub fn render_bytes(
         }
         _ => {
             let decoded = decode_bytes(data, &options.decode)?;
-            match format {
-                OutputFormat::Json => serde_json::to_string_pretty(&decoded).map_err(|error| {
-                    OutputError::Serialization {
-                        format: "json",
-                        message: error.to_string(),
-                    }
-                }),
-                OutputFormat::Yaml => {
-                    serde_yaml::to_string(&decoded).map_err(|error| OutputError::Serialization {
-                        format: "yaml",
-                        message: error.to_string(),
-                    })
-                }
-                OutputFormat::Csv => render_csv(&decoded),
-                OutputFormat::Table => {
-                    render_table(&decoded, options.table_width.unwrap_or(DEFAULT_TABLE_WIDTH))
-                }
-                OutputFormat::Mermaid => Ok(render_mermaid(&decoded)),
-                _ => unreachable!("specialized formats handled above"),
-            }
+            render_decoded(&decoded, format, options)
         }
+    }
+}
+
+fn render_decoded(
+    decoded: &DecodedOutput,
+    format: OutputFormat,
+    options: &RenderOptions,
+) -> Result<String, OutputError> {
+    match format {
+        OutputFormat::Json => {
+            serde_json::to_string_pretty(decoded).map_err(|error| OutputError::Serialization {
+                format: "json",
+                message: error.to_string(),
+            })
+        }
+        OutputFormat::Yaml => {
+            serde_yaml::to_string(decoded).map_err(|error| OutputError::Serialization {
+                format: "yaml",
+                message: error.to_string(),
+            })
+        }
+        OutputFormat::Csv => render_csv(decoded),
+        OutputFormat::Table => {
+            render_table(decoded, options.table_width.unwrap_or(DEFAULT_TABLE_WIDTH))
+        }
+        OutputFormat::Mermaid => Ok(render_mermaid(decoded)),
+        _ => unreachable!("specialized formats handled by caller"),
     }
 }
 
@@ -1882,14 +1893,14 @@ fn apply_power10(integer: &str, exponent: isize) -> String {
 }
 
 fn unit_output(units: impl Iterator<Item = Unit> + Clone) -> String {
-    let display = units
-        .clone()
-        .map(|unit| unit.to_string())
-        .collect::<String>();
     units
+        .clone()
         .map(|unit| ucum_component(&unit))
         .collect::<Option<Vec<_>>>()
-        .map_or(display, |components| components.join("."))
+        .map_or_else(
+            || units.map(|unit| unit.to_string()).collect::<String>(),
+            |components| components.join("."),
+        )
 }
 
 fn ucum_component(unit: &Unit) -> Option<String> {
@@ -1917,6 +1928,7 @@ fn ucum_component(unit: &Unit) -> Option<String> {
         UnitName::Hertz => "Hz",
         UnitName::Fahrenheit => "[degF]",
         UnitName::AmericanGallon => "[gal_us]",
+        UnitName::BritishThermalUnit => "[Btu_IT]",
         UnitName::Calorie => "cal",
         _ => return None,
     };
@@ -2579,7 +2591,7 @@ fn mermaid_escape(value: &str) -> String {
 }
 
 fn hex_string(data: &[u8]) -> String {
-    data.iter().map(|byte| format!("{byte:02X}")).collect()
+    m_bus_core::hex::encode_upper(data, false)
 }
 
 #[cfg(test)]
@@ -2643,6 +2655,27 @@ mod tests {
             ),
             "W (reactive)"
         );
+        assert_eq!(
+            unit_output(
+                [
+                    Unit {
+                        name: UnitName::Meter,
+                        exponent: 1
+                    },
+                    Unit {
+                        name: UnitName::ReactiveWatt,
+                        exponent: 1
+                    },
+                    Unit {
+                        name: UnitName::Hour,
+                        exponent: -1
+                    },
+                ]
+                .into_iter()
+            ),
+            "mW (reactive)h⁻¹"
+        );
+        assert_eq!(unit_output(core::iter::empty()), "");
     }
 
     #[test]
