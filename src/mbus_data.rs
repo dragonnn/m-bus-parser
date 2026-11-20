@@ -141,6 +141,7 @@ fn clean_and_convert(input: &str) -> Vec<u8> {
 pub fn serialize_mbus_data(data: &str, format: &str, key: Option<&[u8; 16]>) -> String {
     match format {
         "json-legacy" => parse_to_json(data, key),
+        #[cfg(feature = "yaml")]
         "yaml-legacy" => parse_to_yaml(data, key),
         "csv-wide" => parse_to_csv(data, key),
         "annotated-legacy" => parse_to_annotated(data),
@@ -238,6 +239,7 @@ struct SummarySection<'a> {
 enum LegacyOutputFormat {
     Summary,
     Json,
+    #[cfg(feature = "yaml")]
     Yaml,
 }
 
@@ -527,6 +529,7 @@ fn build_output<T: serde::Serialize>(
             }
             serde_json::to_string_pretty(&json).unwrap_or_default()
         }
+        #[cfg(feature = "yaml")]
         LegacyOutputFormat::Yaml => {
             let mut yaml = serde_yaml::to_string(parsed).unwrap_or_default();
             yaml.push_str(
@@ -642,7 +645,7 @@ pub fn parse_to_json(input: &str, key: Option<&[u8; 16]>) -> String {
     }
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "yaml")]
 #[must_use]
 fn parse_to_yaml(input: &str, key: Option<&[u8; 16]>) -> String {
     match parse_frame_output(input, key, LegacyOutputFormat::Yaml) {

@@ -542,6 +542,7 @@ fn render_decoded(
                 message: error.to_string(),
             })
         }
+        #[cfg(feature = "yaml")]
         OutputFormat::Yaml => {
             serde_yaml::to_string(decoded).map_err(|error| OutputError::Serialization {
                 format: "yaml",
