@@ -25,11 +25,12 @@ bindgen = "0.73.2"
 
 [features]
 default = []
-std = ["prettytable-rs", "serde_json", "serde_yaml", "serde", "unicode-width", "wired-mbus-link-layer/std", "wireless-mbus-link-layer/std", "m-bus-core/std", "m-bus-application-layer/std"]
+std = ["prettytable-rs", "serde_json", "serde", "unicode-width", "wired-mbus-link-layer/std", "wireless-mbus-link-layer/std", "m-bus-core/std", "m-bus-application-layer/std"]
 plaintext-before-extension = ["m-bus-application-layer/plaintext-before-extension"]
 serde = ["dep:serde", "bitflags/serde", "wired-mbus-link-layer/serde", "wireless-mbus-link-layer/serde", "m-bus-core/serde", "m-bus-application-layer/serde"]
 defmt = ["dep:defmt", "wired-mbus-link-layer/defmt", "wireless-mbus-link-layer/defmt", "m-bus-core/defmt", "m-bus-application-layer/defmt"]
 decryption = ["dep:aes", "dep:cbc", "dep:cipher", "dep:aes-gcm", "dep:ccm", "m-bus-application-layer/decryption"]
+yaml = ["std", "dep:serde_yaml"]
 
 [profile.release]
 opt-level = 'z'   # Optimize for size
